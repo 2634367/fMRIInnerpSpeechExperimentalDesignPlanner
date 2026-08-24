@@ -62,15 +62,70 @@
       }).catch(function (error) { App.toast(error.message, 'bad'); });
   }
 
+  /* Accepts either a bare design object or a downloaded {design, report}
+   * envelope, and fills anything the file is missing from the defaults so an
+   * older or hand-edited file still loads. */
+  function adopt(payload) {
+    var design = payload && payload.design ? payload.design : payload;
+    if (!design || typeof design !== 'object' || !design.aims) {
+      throw new Error('That file does not contain a planner design.');
+    }
+    var merged = App.mergeState(design);
+    Object.keys(App.state).forEach(function (key) {
+      if (!(key in merged)) delete App.state[key];
+    });
+    Object.keys(merged).forEach(function (key) { App.state[key] = merged[key]; });
+    App.refresh(true);
+    return design;
+  }
+
   function loadDesign(name) {
     fetch('/api/design?name=' + encodeURIComponent(name))
       .then(function (response) { return response.json(); })
       .then(function (result) {
         if (result.error) throw new Error(result.error);
-        Object.keys(result.design).forEach(function (key) { App.state[key] = result.design[key]; });
-        App.refresh(true);
+        adopt(result.design);
         App.toast('Loaded design "' + name + '"', 'ok');
       }).catch(function (error) { App.toast(error.message, 'bad'); });
+  }
+
+  function fileStem(name) {
+    return 'fmri-design-' + String(name || 'design')
+      .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  }
+
+  /* Pull a saved preset straight from the server and write it to disk, so a
+   * design can leave this machine without going through the working state. */
+  function downloadPreset(name) {
+    fetch('/api/design?name=' + encodeURIComponent(name))
+      .then(function (response) { return response.json(); })
+      .then(function (result) {
+        if (result.error) throw new Error(result.error);
+        var blob = new Blob([JSON.stringify(result.design, null, 2)], { type: 'application/json' });
+        download(blob, fileStem(name) + '.json');
+        App.toast('Downloaded "' + name + '" as JSON', 'ok');
+      }).catch(function (error) { App.toast(error.message, 'bad'); });
+  }
+
+  function importDesign(file, saveAs) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        adopt(JSON.parse(String(reader.result)));
+      } catch (error) {
+        App.toast('Import failed: ' + error.message, 'bad');
+        return;
+      }
+      var target = (saveAs || '').trim();
+      if (target) {
+        saveDesign(target);
+        App.toast('Imported ' + file.name + ' and saved as "' + target + '"', 'ok');
+      } else {
+        App.toast('Imported ' + file.name + ' into the working design', 'ok');
+      }
+    };
+    reader.onerror = function () { App.toast('Could not read ' + file.name, 'bad'); };
+    reader.readAsText(file);
   }
 
   function deleteDesign(name) {
@@ -116,6 +171,12 @@
       var load = App.h('button', { class: 'btn quiet sm', type: 'button', text: 'Load' });
       load.addEventListener('click', function () { loadDesign(preset.name); });
       actions.appendChild(load);
+      var save = App.h('button', {
+        class: 'btn quiet sm', type: 'button', text: 'Download',
+        title: 'Write this saved design out as a JSON file'
+      });
+      save.addEventListener('click', function () { downloadPreset(preset.name); });
+      actions.appendChild(save);
       if (preset.name !== 'current') {
         var remove = App.h('button', { class: 'btn danger sm', type: 'button', text: 'Delete' });
         remove.addEventListener('click', function () { deleteDesign(preset.name); });
@@ -223,6 +284,17 @@
 
     presetName = App.h('input', { type: 'text', placeholder: 'preset name' });
     presetHost = App.h('div', { class: 'mt' });
+
+    /* The file input stays out of the layout; the visible button drives it. */
+    var importPicker = App.h('input', {
+      type: 'file', accept: '.json,application/json', style: 'display:none'
+    });
+    importPicker.addEventListener('change', function () {
+      var file = importPicker.files && importPicker.files[0];
+      if (file) importDesign(file, presetName.value);
+      importPicker.value = '';
+    });
+
     var presetCard = App.card('Saved designs', 'Stored server-side in presets/', [
       App.h('div', { class: 'split-inline' }, [
         presetName,
@@ -245,6 +317,27 @@
             App.refresh(true);
             App.toast('Design reset to the built-in defaults');
           }
+        })
+      ]),
+      App.h('div', { class: 'btn-row mt' }, [
+        App.h('button', {
+          class: 'btn quiet sm', type: 'button', text: 'Import JSON file',
+          title: 'Load a design file into the working design; name it above to save it as a preset too',
+          onclick: function () { importPicker.click(); }
+        }),
+        App.h('button', {
+          class: 'btn quiet sm', type: 'button', text: 'Download working design',
+          title: 'Write the design as it stands to a JSON file',
+          onclick: function () {
+            var blob = new Blob([JSON.stringify(App.state, null, 2)], { type: 'application/json' });
+            download(blob, fileStem(presetName.value || 'current') + '.json');
+            App.toast('Working design downloaded', 'ok');
+          }
+        }),
+        importPicker,
+        App.h('span', {
+          class: 'muted',
+          text: 'Import replaces the working design; anything the file omits falls back to the defaults.'
         })
       ]),
       presetHost
@@ -270,6 +363,8 @@
     downloadXlsx: downloadXlsx,
     downloadJson: downloadJson,
     saveDesign: function () { saveDesign('current'); },
-    loadDesign: loadDesign
+    loadDesign: loadDesign,
+    downloadPreset: downloadPreset,
+    importDesign: importDesign
   };
 }(window));

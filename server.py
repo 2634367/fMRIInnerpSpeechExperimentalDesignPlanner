@@ -11,6 +11,7 @@ saved designs and the XLSX report generator.  Run with::
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import os
 import re
@@ -19,7 +20,7 @@ import tempfile
 from datetime import datetime
 from typing import Any, Dict
 
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 
 from planner.protocols import (
     PROTOCOL_ROLES,
@@ -51,6 +52,38 @@ store = ProtocolStore(PROTOCOL_DIR)
 
 SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+COMPRESSIBLE_TYPES = {
+    "application/javascript",
+    "application/json",
+    "application/xml",
+    "image/svg+xml",
+    "text/javascript",
+}
+GZIP_FLOOR_BYTES = 1024
+
+
+def asset_url(path: str) -> str:
+    """Static URL stamped with the file's own mtime and size.
+
+    A rebuilt image or an edited file changes the stamp, so the browser asks
+    for a URL it has never seen and cannot answer from its cache.  Nothing the
+    user has to know about: no hard refresh, no cleared cache.
+    """
+    try:
+        stat = os.stat(os.path.join(STATIC_DIR, path))
+        stamp = f"{int(stat.st_mtime)}-{stat.st_size}"
+    except OSError:
+        stamp = "0"
+    return f"/static/{path}?v={stamp}"
+
+
+app.jinja_env.globals["asset"] = asset_url
+
+
+def _page(name: str) -> Response:
+    return Response(render_template(name), mimetype="text/html; charset=utf-8")
+
 
 def _preset_path(name: str) -> str:
     clean = SAFE_NAME.sub("-", (name or "").strip())[:80] or "untitled"
@@ -81,7 +114,7 @@ def _body() -> Dict[str, Any]:
 
 @app.route("/")
 def index() -> Response:
-    return send_from_directory(app.template_folder, "index.html")
+    return _page("index.html")
 
 
 @app.route("/favicon.ico")
@@ -342,13 +375,51 @@ def handle_protocol_error(exc: ProtocolError) -> Response:
 def handle_404(_exc) -> Response:
     if request.path.startswith("/api/"):
         return jsonify({"error": "Not found", "path": request.path}), 404
-    return send_from_directory(app.template_folder, "index.html")
+    return _page("index.html")
 
 
 @app.after_request
-def no_store(response: Response) -> Response:
-    if request.path.startswith("/api/"):
+def freshness(response: Response) -> Response:
+    """Never serve yesterday's application code.
+
+    API answers and the page shell are never stored; static assets carry an
+    ETag and must be revalidated on every request, so a refresh always picks
+    up a rebuilt file while an unchanged one still costs only a 304.
+    """
+    if request.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    else:
         response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.after_request
+def compress(response: Response) -> Response:
+    """gzip the text payloads: the UI bundle is most of what crosses the wire."""
+    if "gzip" not in request.headers.get("Accept-Encoding", "").lower():
+        return response
+    if not 200 <= response.status_code < 300 or response.status_code == 204:
+        return response
+    if "Content-Encoding" in response.headers:
+        return response
+
+    content_type = (response.content_type or "").split(";")[0].strip().lower()
+    if not (content_type.startswith("text/") or content_type in COMPRESSIBLE_TYPES):
+        return response
+
+    response.vary.add("Accept-Encoding")
+    if response.direct_passthrough:
+        response.direct_passthrough = False
+    body = response.get_data()
+    if len(body) < GZIP_FLOOR_BYTES:
+        return response
+
+    packed = gzip.compress(body, 6)
+    if len(packed) >= len(body):
+        return response
+    response.set_data(packed)
+    response.headers["Content-Encoding"] = "gzip"
+    response.headers["Content-Length"] = str(len(packed))
     return response
 
 

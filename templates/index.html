@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>fMRI Experimental Design Planner | Wright State University</title>
-<link rel="icon" href="/static/wsu-mark.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/static/css/app.css">
+<link rel="icon" href="{{ asset('wsu-mark.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ asset('css/app.css') }}">
 </head>
 <body>
 
@@ -35,11 +35,11 @@
 
 <div class="toast-host" id="toasts"></div>
 
-<script src="/static/js/efficiency.js"></script>
-<script src="/static/js/model.js"></script>
-<script src="/static/js/ui.js"></script>
-<script src="/static/js/protocols.js"></script>
-<script src="/static/js/export.js"></script>
+<script src="{{ asset('js/efficiency.js') }}"></script>
+<script src="{{ asset('js/model.js') }}"></script>
+<script src="{{ asset('js/ui.js') }}"></script>
+<script src="{{ asset('js/protocols.js') }}"></script>
+<script src="{{ asset('js/export.js') }}"></script>
 <script>window.addEventListener('DOMContentLoaded', function () { window.PlannerApp.start(); });</script>
 </body>
 </html>

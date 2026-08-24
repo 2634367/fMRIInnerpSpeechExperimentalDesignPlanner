@@ -445,6 +445,18 @@ ul.warnings li:last-child { border-bottom: 0; }
 .tabview { display: none; }
 .tabview.active { display: block; }
 
+/* ------------------------------------------------------------- timeline */
+
+.timeline-figure {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-bottom: none;
+  padding: 8px 10px 4px;
+  overflow-x: auto;
+}
+.timeline-figure svg { display: block; width: 100%; height: auto; min-width: 720px; }
+.timeline-figure + .plot-caption { border: 1px solid var(--line-strong); border-top: none; }
+
 /* --------------------------------------------------------------- canvas */
 
 .plot-wrap { position: relative; background: var(--surface); border: 1px solid var(--line); }

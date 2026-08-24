@@ -1160,6 +1160,8 @@
       h('div', {}, [masters, targetCard]),
       h('div', {}, [statusCard, actions])
     ]));
+    panel.appendChild(buildAimToggleCard());
+    panel.appendChild(buildStudyFigureCard());
     return panel;
   }
 
@@ -1492,6 +1494,8 @@
 
     panel.appendChild(buildAimReadoutCard(id));
     panel.appendChild(buildDesignTableCard(id));
+    panel.appendChild(buildTrialTimelineCard(id));
+    panel.appendChild(buildAimMatrixFigureCard(id));
     return panel;
   }
 
@@ -1991,6 +1995,1072 @@
         })
       ));
     });
+    return node;
+  }
+
+
+  /* --------------------------------------------------------- trial figure */
+
+  /* A publication-style schematic of one trial: a strip of stimulus screens,
+   * the phase names and their second bounds, an arrow timeline carrying the
+   * cumulative onsets, and a to-scale bar underneath so the reader can see
+   * how the real proportions differ from the equal-width schematic. */
+
+  var TIMELINE_SANS = 'Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif';
+  var TIMELINE_MONO = 'SF Mono, IBM Plex Mono, JetBrains Mono, Menlo, Consolas, monospace';
+
+  var TIMELINE_ROLE_FILL = {
+    fixation: '#DCD59A',
+    question: '#046A38',
+    rest: '#E7E3C6',
+    answer: '#CBA052',
+    cue: '#719949',
+    other: '#B9C0B4',
+    gap: '#D8DCD5'
+  };
+  var TIMELINE_ROLE_DARK = { question: true, cue: true };
+
+  function timelineEscape(text) {
+    return String(text === null || text === undefined ? '' : text)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function timelineClip(text, budget) {
+    var value = String(text || '');
+    if (budget < 4 || value.length <= budget) return value;
+    return value.slice(0, budget - 1).replace(/\s+$/, '') + '\u2026';
+  }
+
+  function timelineSeconds(value) {
+    return String(H.round(H.num(value), 2));
+  }
+
+  /* The dark stimulus screen and whatever the participant sees on it. */
+  function timelineScreen(x, y, size, role) {
+    var cx = x + size / 2;
+    var cy = y + size / 2;
+    var parts = ['<rect x="' + x + '" y="' + y + '" width="' + size + '" height="' + size
+      + '" rx="3" fill="#101820" stroke="#00482B" stroke-width="1.5"/>'];
+
+    if (role === 'question') {
+      var inset = Math.round(size * 0.17);
+      var lineX = x + inset;
+      var usable = size - inset * 2;
+      parts.push('<rect x="' + lineX + '" y="' + (y + inset) + '" width="' + usable
+        + '" height="' + usable + '" rx="2" fill="none" stroke="#ffffff" stroke-width="1.4"/>');
+      [0.74, 0.92, 0.52].forEach(function (fraction, index) {
+        var lineY = y + inset + usable * (0.3 + index * 0.2);
+        parts.push('<rect x="' + (lineX + usable * 0.08) + '" y="' + lineY + '" width="'
+          + H.round(usable * 0.84 * fraction, 1) + '" height="3" rx="1.5" fill="#F2F1F0"/>');
+      });
+    } else if (role === 'answer') {
+      parts.push('<circle cx="' + cx + '" cy="' + (cy - 6) + '" r="8" fill="#CBA052"/>');
+      parts.push('<text x="' + cx + '" y="' + (cy + 20)
+        + '" text-anchor="middle" font-family="' + TIMELINE_MONO
+        + '" font-size="11" fill="#DCD59A">yes / no</text>');
+    } else if (role === 'rest') {
+      parts.push('<circle cx="' + cx + '" cy="' + cy + '" r="' + H.round(size * 0.24, 1)
+        + '" fill="none" stroke="#3d4a4f" stroke-width="1.2" stroke-dasharray="3 4"/>');
+      parts.push('<circle cx="' + cx + '" cy="' + cy + '" r="5" fill="#ffffff"/>');
+    } else if (role === 'cue') {
+      var arm = Math.round(size * 0.2);
+      parts.push('<polygon points="' + cx + ',' + (cy - arm) + ' ' + (cx + arm) + ','
+        + (cy + arm) + ' ' + (cx - arm) + ',' + (cy + arm)
+        + '" fill="none" stroke="#ffffff" stroke-width="1.8"/>');
+      parts.push('<circle cx="' + cx + '" cy="' + (cy + arm * 0.25) + '" r="2.5" fill="#ffffff"/>');
+    } else if (role === 'fixation') {
+      parts.push('<circle cx="' + cx + '" cy="' + cy + '" r="7" fill="#ffffff"/>');
+    } else {
+      var side = Math.round(size * 0.3);
+      parts.push('<rect x="' + (cx - side / 2) + '" y="' + (cy - side / 2) + '" width="' + side
+        + '" height="' + side + '" fill="none" stroke="#ffffff" stroke-width="1.6"/>');
+    }
+    return parts.join('');
+  }
+
+  /* Steps that keep the to-scale ruler to a handful of round labels. */
+  function timelineTickStep(total) {
+    var candidates = [1, 2, 5, 10, 15, 20, 30, 60, 120];
+    for (var i = 0; i < candidates.length; i += 1) {
+      if (total / candidates[i] <= 9) return candidates[i];
+    }
+    return candidates[candidates.length - 1];
+  }
+
+  function timelineMarkup(id) {
+    var aim = App.state.aims[id];
+    var ctx = M.protocolContext(App.boot, aim.protocol);
+    var geometry = M.aimGeometry(aim, ctx.trSeconds);
+
+    var steps = aim.phases.map(function (phase) {
+      var min = H.num(phase.min);
+      var max = Math.max(min, H.num(phase.max));
+      return {
+        name: phase.name || 'Phase',
+        role: phase.role || 'other',
+        min: min,
+        max: max,
+        mean: (min + max) / 2
+      };
+    });
+    if (geometry.interTrialGap > 0) {
+      steps.push({
+        name: 'Inter-trial gap',
+        role: 'gap',
+        min: geometry.interTrialGap,
+        max: geometry.interTrialGap,
+        mean: geometry.interTrialGap
+      });
+    }
+    if (!steps.length) return '';
+
+    var spanMin = H.sum(steps, function (step) { return step.min; });
+    var spanMax = H.sum(steps, function (step) { return step.max; });
+
+    var count = steps.length;
+    var colWidth = count > 7 ? 148 : (count > 5 ? 168 : 196);
+    var padLeft = 30;
+    var padRight = 48;
+    var width = padLeft + padRight + colWidth * count;
+    var inner = width - padLeft - padRight;
+    var screen = Math.min(colWidth - 34, 116);
+
+    var screenTop = 16;
+    var screenBottom = screenTop + screen;
+    var nameY = screenBottom + 24;
+    var durationY = nameY + 17;
+    var meanY = durationY + 15;
+    var axisY = meanY + 26;
+    var tickY = axisY + 20;
+    var scaleTitleY = tickY + 36;
+    var barTop = scaleTitleY + 10;
+    var barHeight = 26;
+    var barBottom = barTop + barHeight;
+    var rulerY = barBottom + 13;
+    var legendY = rulerY + 26;
+    var height = legendY + 14;
+
+    var svg = [];
+    svg.push('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + width + ' ' + height
+      + '" width="' + width + '" height="' + height + '" role="img">');
+    svg.push('<title>' + timelineEscape(aim.name) + ' trial timeline</title>');
+    svg.push('<defs><pattern id="tl-jitter-' + id + '" width="7" height="7" '
+      + 'patternTransform="rotate(45)" patternUnits="userSpaceOnUse">'
+      + '<rect width="7" height="7" fill="#ffffff" fill-opacity="0"/>'
+      + '<line x1="0" y1="0" x2="0" y2="7" stroke="#101820" stroke-opacity="0.22" stroke-width="2.5"/>'
+      + '</pattern></defs>');
+    svg.push('<rect width="' + width + '" height="' + height + '" fill="#ffffff"/>');
+
+    /* Row one: the screens, their names and their second bounds. */
+    steps.forEach(function (step, index) {
+      var colX = padLeft + colWidth * index;
+      var centre = colX + colWidth / 2;
+      svg.push(timelineScreen(H.round(centre - screen / 2, 1), screenTop, screen, step.role));
+      var label = timelineClip(step.name, Math.floor(colWidth / 7.2));
+      svg.push('<text x="' + centre + '" y="' + nameY + '" text-anchor="middle" font-family="'
+        + TIMELINE_SANS + '" font-size="13" font-weight="600" fill="#101820">'
+        + '<title>' + timelineEscape(step.name) + '</title>'
+        + timelineEscape(label) + '</text>');
+
+      var bounds = step.min === step.max
+        ? timelineSeconds(step.min) + ' s'
+        : timelineSeconds(step.min) + ' – ' + timelineSeconds(step.max) + ' s';
+      svg.push('<text x="' + centre + '" y="' + durationY + '" text-anchor="middle" font-family="'
+        + TIMELINE_MONO + '" font-size="12.5" fill="#00482B">' + bounds + '</text>');
+      if (step.min !== step.max) {
+        svg.push('<text x="' + centre + '" y="' + meanY + '" text-anchor="middle" font-family="'
+          + TIMELINE_SANS + '" font-size="10.5" fill="#6b767b">jittered, mean '
+          + timelineSeconds(step.mean) + ' s</text>');
+      }
+    });
+
+    /* Row two: the arrow axis carrying the cumulative mean onsets. */
+    svg.push('<line x1="' + padLeft + '" y1="' + axisY + '" x2="' + (width - padRight + 12)
+      + '" y2="' + axisY + '" stroke="#101820" stroke-width="2.4"/>');
+    svg.push('<polygon points="' + (width - padRight + 12) + ',' + (axisY - 6) + ' '
+      + (width - padRight + 26) + ',' + axisY + ' ' + (width - padRight + 12) + ',' + (axisY + 6)
+      + '" fill="#101820"/>');
+
+    var onset = 0;
+    for (var boundary = 0; boundary <= count; boundary += 1) {
+      var markX = padLeft + colWidth * boundary;
+      if (boundary === count) markX -= 2;
+      svg.push('<line x1="' + markX + '" y1="' + axisY + '" x2="' + markX + '" y2="'
+        + (axisY - 22) + '" stroke="#046A38" stroke-width="1.6"/>');
+      svg.push('<polygon points="' + markX + ',' + (axisY - 28) + ' ' + (markX - 4.5) + ','
+        + (axisY - 19) + ' ' + (markX + 4.5) + ',' + (axisY - 19) + '" fill="#046A38"/>');
+      svg.push('<text x="' + markX + '" y="' + tickY + '" text-anchor="middle" font-family="'
+        + TIMELINE_MONO + '" font-size="11.5" fill="#101820">t = ' + timelineSeconds(onset)
+        + ' s</text>');
+      if (boundary < count) onset += steps[boundary].mean;
+    }
+
+    /* Row three: the same trial drawn to scale. */
+    var total = onset || 1;
+    svg.push('<text x="' + padLeft + '" y="' + scaleTitleY + '" font-family="' + TIMELINE_SANS
+      + '" font-size="10.5" letter-spacing="1.4" fill="#6b767b">DRAWN TO SCALE '
+      + '— MEAN TRIAL ' + timelineSeconds(total) + ' S'
+      + (spanMin === spanMax ? ''
+        : ' (' + timelineSeconds(spanMin) + '–' + timelineSeconds(spanMax) + ' S)')
+      + '</text>');
+
+    var cursor = padLeft;
+    steps.forEach(function (step) {
+      var segment = inner * (step.mean / total);
+      var fill = TIMELINE_ROLE_FILL[step.role] || TIMELINE_ROLE_FILL.other;
+      svg.push('<rect x="' + H.round(cursor, 2) + '" y="' + barTop + '" width="'
+        + H.round(segment, 2) + '" height="' + barHeight + '" fill="' + fill
+        + '" stroke="#ffffff" stroke-width="1"/>');
+      if (step.min !== step.max) {
+        svg.push('<rect x="' + H.round(cursor, 2) + '" y="' + barTop + '" width="'
+          + H.round(segment, 2) + '" height="' + barHeight + '" fill="url(#tl-jitter-' + id
+          + ')" stroke="none"/>');
+      }
+      if (segment > 42) {
+        svg.push('<text x="' + H.round(cursor + segment / 2, 2) + '" y="' + (barTop + 17)
+          + '" text-anchor="middle" font-family="' + TIMELINE_MONO + '" font-size="11" fill="'
+          + (TIMELINE_ROLE_DARK[step.role] ? '#F2F1F0' : '#101820') + '">'
+          + timelineSeconds(step.mean) + ' s</text>');
+      }
+      cursor += segment;
+    });
+    svg.push('<rect x="' + padLeft + '" y="' + barTop + '" width="' + inner + '" height="'
+      + barHeight + '" fill="none" stroke="#b9c0b4" stroke-width="1"/>');
+
+    var tickStep = timelineTickStep(total);
+    for (var mark = 0; mark <= total + 0.001; mark += tickStep) {
+      var x = padLeft + inner * (mark / total);
+      svg.push('<line x1="' + H.round(x, 2) + '" y1="' + barBottom + '" x2="' + H.round(x, 2)
+        + '" y2="' + (barBottom + 5) + '" stroke="#6b767b" stroke-width="1"/>');
+      svg.push('<text x="' + H.round(x, 2) + '" y="' + rulerY + '" text-anchor="middle" '
+        + 'font-family="' + TIMELINE_MONO + '" font-size="10.5" fill="#6b767b">'
+        + timelineSeconds(mark) + '</text>');
+    }
+
+    /* Legend: only the roles this aim actually uses. */
+    var seen = {};
+    var legendX = padLeft;
+    steps.forEach(function (item) {
+      if (seen[item.role]) return;
+      seen[item.role] = true;
+      var label = item.role === 'gap' ? 'inter-trial gap' : item.role;
+      svg.push('<rect x="' + legendX + '" y="' + (legendY - 9) + '" width="11" height="11" fill="'
+        + (TIMELINE_ROLE_FILL[item.role] || TIMELINE_ROLE_FILL.other)
+        + '" stroke="#b9c0b4" stroke-width="1"/>');
+      svg.push('<text x="' + (legendX + 16) + '" y="' + legendY + '" font-family="' + TIMELINE_SANS
+        + '" font-size="10.5" fill="#3d4a4f">' + timelineEscape(label) + '</text>');
+      legendX += 26 + label.length * 6.4;
+    });
+    svg.push('<rect x="' + legendX + '" y="' + (legendY - 9) + '" width="11" height="11" '
+      + 'fill="#ffffff" stroke="#b9c0b4" stroke-width="1"/>');
+    svg.push('<rect x="' + legendX + '" y="' + (legendY - 9) + '" width="11" height="11" fill="url(#tl-jitter-'
+      + id + ')" stroke="none"/>');
+    svg.push('<text x="' + (legendX + 16) + '" y="' + legendY + '" font-family="' + TIMELINE_SANS
+      + '" font-size="10.5" fill="#3d4a4f">jittered phase</text>');
+
+    svg.push('</svg>');
+    return svg.join('');
+  }
+
+  function timelineFileStem(id) {
+    return (App.state.aims[id].short || App.state.aims[id].name || 'aim')
+      .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-trial-timeline';
+  }
+
+  function saveBlob(blob, filename) {
+    var url = URL.createObjectURL(blob);
+    var anchor = h('a', { href: url, download: filename, style: 'display:none' });
+    document.body.appendChild(anchor);
+    anchor.click();
+    setTimeout(function () {
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    }, 400);
+  }
+
+  function downloadFigureSvg(markup, stem) {
+    if (!markup) return;
+    saveBlob(new Blob([markup], { type: 'image/svg+xml;charset=utf-8' }), stem + '.svg');
+    toast('Figure SVG downloaded', 'ok');
+  }
+
+  /* PNG goes through an <img> of the serialised SVG, drawn at three times the
+   * nominal size so the figure stays sharp in a slide or a grant page. */
+  function downloadFigurePng(markup, stem) {
+    if (!markup) return;
+    var image = new Image();
+    image.onload = function () {
+      var scale = 3;
+      var canvas = h('canvas');
+      canvas.width = image.width * scale;
+      canvas.height = image.height * scale;
+      var pen = canvas.getContext('2d');
+      pen.fillStyle = '#ffffff';
+      pen.fillRect(0, 0, canvas.width, canvas.height);
+      pen.drawImage(image, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(function (blob) {
+        if (!blob) { toast('PNG export failed; use the SVG instead.', 'bad'); return; }
+        saveBlob(blob, stem + '.png');
+        toast('Figure PNG downloaded', 'ok');
+      }, 'image/png');
+    };
+    image.onerror = function () { toast('PNG export failed; use the SVG instead.', 'bad'); };
+    image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(markup);
+  }
+
+  function buildTrialTimelineCard(id) {
+    var host = h('div', { class: 'timeline-figure' });
+    var caption = h('div', { class: 'plot-caption' });
+    var markup = '';
+
+    var node = card('Trial timeline',
+      'One trial as the participant experiences it',
+      [host, caption, h('div', { class: 'btn-row mt' }, [
+        h('button', {
+          class: 'btn quiet sm', type: 'button', text: 'Download SVG',
+          title: 'Vector figure for a manuscript or a grant page',
+          onclick: function () { downloadFigureSvg(markup, timelineFileStem(id)); }
+        }),
+        h('button', {
+          class: 'btn quiet sm', type: 'button', text: 'Download PNG',
+          title: 'Raster figure at three times nominal size',
+          onclick: function () { downloadFigurePng(markup, timelineFileStem(id)); }
+        }),
+        h('button', {
+          class: 'btn quiet sm', type: 'button', text: 'Copy trial sequence',
+          onclick: function () {
+            var aimReport = currentAim(id);
+            copy(aimReport ? aimReport.table[0].sequence : '', 'Trial sequence');
+          }
+        })
+      ])]);
+
+    registerView(function () {
+      markup = timelineMarkup(id);
+      host.innerHTML = markup || '';
+      if (!markup) {
+        clear(host);
+        host.appendChild(h('div', {
+          class: 'notice',
+          text: 'Add at least one trial phase above to draw the timeline.'
+        }));
+        caption.textContent = '';
+        return;
+      }
+      var aim = App.state.aims[id];
+      var ctx = M.protocolContext(App.boot, aim.protocol);
+      var geometry = M.aimGeometry(aim, ctx.trSeconds);
+      caption.textContent = 'Onsets are cumulative means; jittered phases vary trial to trial. '
+        + geometry.trialsPerBlock + ' trials per block, ' + geometry.blocksPerRun
+        + ' blocks per run, TR ' + H.round(ctx.trSeconds, 2) + ' s.';
+    });
+
+    return node;
+  }
+
+
+  /* -------------------------------------------------------- matrix figure */
+
+  /* The design matrix table drawn as the figure it describes: trial, block,
+   * run, session and experiment, each row to scale on its own axis, with the
+   * element that the row above expands picked out and joined to it.  Same
+   * palette as the trial timeline, so the two figures read as one pair. */
+
+  var MATRIX_FILL = {
+    trial: '#00482B',
+    gap: '#D8DCD5',
+    block: '#00482B',
+    rest: '#E7E3C6',
+    dummy: '#B9C0B4',
+    lead: '#DCD59A',
+    run: '#00482B',
+    setup: '#CBA052',
+    brk: '#F8E08E',
+    session: '#00482B'
+  };
+  var MATRIX_DARK = { trial: true, block: true, run: true, session: true };
+  var MATRIX_LEGEND = [
+    { kind: 'trial', label: 'trial' },
+    { kind: 'gap', label: 'inter-trial gap' },
+    { kind: 'rest', label: 'inter-block rest' },
+    { kind: 'dummy', label: 'dummy volumes' },
+    { kind: 'lead', label: 'lead-in / lead-out' },
+    { kind: 'setup', label: 'setup and anatomicals' },
+    { kind: 'brk', label: 'in-scanner break' }
+  ];
+
+  function matrixCount(value, noun) {
+    var count = H.round(H.num(value), 2);
+    var text = Math.abs(count - Math.round(count)) < 0.005
+      ? H.fmtNumber(Math.round(count))
+      : H.trim(count, 2);
+    return text + ' ' + noun + (Math.abs(count - 1) < 0.005 ? '' : 's');
+  }
+
+  function matrixMinutes(value) {
+    var minutes = H.num(value);
+    if (minutes >= 90) return H.round(minutes / 60, 2) + ' h';
+    return H.round(minutes, 1) + ' min';
+  }
+
+  /* One repeating element, laid out `count` times with `gap` between; a
+   * fractional count draws its remainder as a cut-off final element. */
+  function matrixRepeat(parts, count, span, kind, gap, gapKind) {
+    var whole = Math.floor(count + 1e-6);
+    var remainder = count - whole;
+    for (var index = 0; index < whole; index += 1) {
+      parts.push({ span: span, kind: kind });
+      if (gap > 0 && (index < whole - 1 || remainder > 0)) {
+        parts.push({ span: gap, kind: gapKind });
+      }
+    }
+    if (remainder > 0.01) parts.push({ span: span * remainder, kind: kind, cut: true });
+    return parts;
+  }
+
+  function matrixRows(id) {
+    var record = currentAim(id);
+    if (!record) return null;
+    var stateAim = App.state.aims[id];
+    var structure = record.structure;
+    var derived = record.derived;
+    var weeks = H.num(App.state.budget.weeksAvailable);
+
+    var trialParts = stateAim.phases.map(function (phase) {
+      var min = H.num(phase.min);
+      var max = Math.max(min, H.num(phase.max));
+      return { span: (min + max) / 2, kind: phase.role || 'other', role: true, label: phase.name };
+    });
+    if (!trialParts.length) return null;
+
+    var blockParts = matrixRepeat([], structure.trialsPerBlock, derived.trialMean,
+      'trial', structure.interTrialGap, 'gap');
+
+    var runParts = [];
+    if (derived.dummySeconds > 0) runParts.push({ span: derived.dummySeconds, kind: 'dummy' });
+    if (structure.leadIn > 0) runParts.push({ span: structure.leadIn, kind: 'lead' });
+    matrixRepeat(runParts, structure.blocksPerRun, derived.blockMean,
+      'block', structure.interBlockRest, 'rest');
+    if (structure.leadOut > 0) runParts.push({ span: structure.leadOut, kind: 'lead' });
+
+    var sessionParts = [];
+    if (derived.sessionSetupMinutes > 0) {
+      sessionParts.push({ span: derived.sessionSetupMinutes, kind: 'setup' });
+    }
+    matrixRepeat(sessionParts, structure.runsPerSession, derived.runMean / 60,
+      'run', derived.sessionBreakMinutes, 'brk');
+
+    var experimentParts = matrixRepeat([], derived.sessions, derived.sessionMeanMinutes,
+      'session', 0, null);
+
+    /* Where the row above lands inside this row: the first repeating element. */
+    function offsetOf(parts, kind) {
+      var at = 0;
+      for (var index = 0; index < parts.length; index += 1) {
+        if (parts[index].kind === kind) return { from: at, to: at + parts[index].span };
+        at += parts[index].span;
+      }
+      return null;
+    }
+
+    return [
+      {
+        level: 'Trial', parts: trialParts, unit: 's',
+        note: '1 trial · ' + record.table[0].duration
+      },
+      {
+        level: 'Block', parts: blockParts, unit: 's',
+        note: matrixCount(structure.trialsPerBlock, 'trial') + ' · '
+          + matrixMinutes(derived.blockMean / 60),
+        zoom: offsetOf(blockParts, 'trial')
+      },
+      {
+        level: 'Run', parts: runParts, unit: 's',
+        note: matrixCount(structure.blocksPerRun, 'block') + ' · '
+          + matrixCount(derived.trialsPerRun, 'trial') + ' · '
+          + matrixMinutes(derived.runMean / 60) + ' · '
+          + H.fmtNumber(derived.volumesPerRun) + ' volumes',
+        zoom: offsetOf(runParts, 'block')
+      },
+      {
+        level: 'Session', parts: sessionParts, unit: 'min',
+        note: matrixCount(structure.runsPerSession, 'run') + ' · '
+          + matrixCount(derived.trialsPerSession, 'trial') + ' · '
+          + matrixMinutes(derived.sessionMeanMinutes),
+        zoom: offsetOf(sessionParts, 'run')
+      },
+      {
+        level: 'Experiment', parts: experimentParts, unit: 'min',
+        note: matrixCount(derived.sessions, 'session') + ' over '
+          + matrixCount(weeks, 'week') + ' · '
+          + matrixCount(derived.totalTrials, 'trial') + ' · '
+          + H.round(derived.totalHours, 1) + ' h',
+        zoom: offsetOf(experimentParts, 'session')
+      }
+    ];
+  }
+
+  function matrixFigureMarkup(id) {
+    var rows = matrixRows(id);
+    if (!rows) return '';
+
+    var width = 1120;
+    var padLeft = 26;
+    var padRight = 26;
+    var inner = width - padLeft - padRight;
+    var barHeight = 32;
+    var connector = 34;
+    var rowPitch = 18 + barHeight + connector;
+    var top = 20;
+
+    var svg = [];
+    var lastBottom = top + (rows.length - 1) * rowPitch + 18 + barHeight;
+    svg.push('<defs><pattern id="mx-cut-' + id + '" width="6" height="6" '
+      + 'patternTransform="rotate(45)" patternUnits="userSpaceOnUse">'
+      + '<line x1="0" y1="0" x2="0" y2="6" stroke="#ffffff" stroke-opacity="0.75" stroke-width="2"/>'
+      + '</pattern></defs>');
+
+    rows.forEach(function (row, index) {
+      var barTop = top + index * rowPitch + 18;
+      var total = H.sum(row.parts, function (part) { return part.span; }) || 1;
+      row.barTop = barTop;
+      row.scale = function (value) { return padLeft + inner * (value / total); };
+
+      svg.push('<text x="' + padLeft + '" y="' + (barTop - 7) + '" font-family="' + TIMELINE_SANS
+        + '" font-size="10.5" letter-spacing="1.6" font-weight="600" fill="#00482B">'
+        + row.level.toUpperCase() + '</text>');
+      svg.push('<text x="' + (width - padRight) + '" y="' + (barTop - 7) + '" text-anchor="end" '
+        + 'font-family="' + TIMELINE_SANS + '" font-size="11" fill="#3d4a4f">'
+        + timelineEscape(row.note) + '</text>');
+
+      var cursor = 0;
+      var thin = row.parts.length > 1
+        && inner / row.parts.length < 3.5;
+      row.parts.forEach(function (part) {
+        var x = row.scale(cursor);
+        var segment = inner * (part.span / total);
+        var fill = part.role
+          ? (TIMELINE_ROLE_FILL[part.kind] || TIMELINE_ROLE_FILL.other)
+          : (MATRIX_FILL[part.kind] || MATRIX_FILL.trial);
+        svg.push('<rect x="' + H.round(x, 2) + '" y="' + barTop + '" width="'
+          + H.round(Math.max(segment, 0.6), 2) + '" height="' + barHeight + '" fill="' + fill
+          + (thin ? '"' : '" stroke="#ffffff" stroke-width="1"') + '/>');
+        if (part.cut) {
+          svg.push('<rect x="' + H.round(x, 2) + '" y="' + barTop + '" width="'
+            + H.round(Math.max(segment, 0.6), 2) + '" height="' + barHeight
+            + '" fill="url(#mx-cut-' + id + ')"/>');
+        }
+        if (segment > 46) {
+          var text = row.unit === 'min'
+            ? matrixMinutes(part.span)
+            : (part.span >= 120 ? matrixMinutes(part.span / 60) : timelineSeconds(part.span) + ' s');
+          svg.push('<text x="' + H.round(x + segment / 2, 2) + '" y="' + (barTop + 20)
+            + '" text-anchor="middle" font-family="' + TIMELINE_MONO + '" font-size="10.5" fill="'
+            + (MATRIX_DARK[part.kind] && !part.role ? '#F2F1F0'
+              : (TIMELINE_ROLE_DARK[part.kind] && part.role ? '#F2F1F0' : '#101820'))
+            + '">' + text + '</text>');
+        }
+        cursor += part.span;
+      });
+      svg.push('<rect x="' + padLeft + '" y="' + barTop + '" width="' + inner + '" height="'
+        + barHeight + '" fill="none" stroke="#b9c0b4" stroke-width="1"/>');
+    });
+
+    /* Join each row to the element of the row below that contains it. */
+    rows.forEach(function (row, index) {
+      if (!row.zoom || index === 0) return;
+      var above = rows[index - 1];
+      var aboveBottom = above.barTop + barHeight;
+      var left = row.scale(row.zoom.from);
+      var right = Math.max(left + 1.2, row.scale(row.zoom.to));
+
+      svg.push('<polygon points="' + padLeft + ',' + aboveBottom + ' ' + (width - padRight) + ','
+        + aboveBottom + ' ' + H.round(right, 2) + ',' + row.barTop + ' ' + H.round(left, 2) + ','
+        + row.barTop + '" fill="#CBA052" fill-opacity="0.12"/>');
+      svg.push('<line x1="' + padLeft + '" y1="' + aboveBottom + '" x2="' + H.round(left, 2)
+        + '" y2="' + row.barTop + '" stroke="#AE8643" stroke-width="1" stroke-dasharray="4 3"/>');
+      svg.push('<line x1="' + (width - padRight) + '" y1="' + aboveBottom + '" x2="'
+        + H.round(right, 2) + '" y2="' + row.barTop
+        + '" stroke="#AE8643" stroke-width="1" stroke-dasharray="4 3"/>');
+      svg.push('<rect x="' + H.round(left, 2) + '" y="' + row.barTop + '" width="'
+        + H.round(right - left, 2) + '" height="' + barHeight
+        + '" fill="none" stroke="#AE8643" stroke-width="1.6"/>');
+    });
+
+    /* Legend: trial phase roles first, then the structural elements. */
+    var legendY = lastBottom + 26;
+    var legendX = padLeft;
+    var seen = {};
+    var entries = [];
+    rows[0].parts.forEach(function (part) {
+      if (seen[part.kind]) return;
+      seen[part.kind] = true;
+      entries.push({ fill: TIMELINE_ROLE_FILL[part.kind] || TIMELINE_ROLE_FILL.other, label: part.kind });
+    });
+    MATRIX_LEGEND.forEach(function (entry) {
+      var used = rows.some(function (row, index) {
+        return index > 0 && row.parts.some(function (part) { return part.kind === entry.kind; });
+      });
+      if (used) entries.push({ fill: MATRIX_FILL[entry.kind], label: entry.label });
+    });
+
+    entries.forEach(function (entry) {
+      var span = 26 + entry.label.length * 6.4;
+      if (legendX + span > width - padRight) {
+        legendX = padLeft;
+        legendY += 18;
+      }
+      svg.push('<rect x="' + legendX + '" y="' + (legendY - 9) + '" width="11" height="11" fill="'
+        + entry.fill + '" stroke="#b9c0b4" stroke-width="1"/>');
+      svg.push('<text x="' + (legendX + 16) + '" y="' + legendY + '" font-family="' + TIMELINE_SANS
+        + '" font-size="10.5" fill="#3d4a4f">' + timelineEscape(entry.label) + '</text>');
+      legendX += span;
+    });
+
+    var height = legendY + 14;
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + width + ' ' + height
+      + '" width="' + width + '" height="' + height + '" role="img">'
+      + '<title>' + timelineEscape(App.state.aims[id].name) + ' design matrix</title>'
+      + '<rect width="' + width + '" height="' + height + '" fill="#ffffff"/>'
+      + svg.join('') + '</svg>';
+  }
+
+  function buildAimMatrixFigureCard(id) {
+    var host = h('div', { class: 'timeline-figure' });
+    var caption = h('div', { class: 'plot-caption' });
+    var markup = '';
+
+    function stem() {
+      return timelineFileStem(id).replace('-trial-timeline', '-design-matrix');
+    }
+
+    var node = card('Design matrix figure',
+      [host, caption, h('div', { class: 'btn-row mt' }, [
+        h('button', {
+          class: 'btn quiet sm', type: 'button', text: 'Download SVG',
+          title: 'Vector figure for a manuscript or a grant page',
+          onclick: function () { downloadFigureSvg(markup, stem()); }
+        }),
+        h('button', {
+          class: 'btn quiet sm', type: 'button', text: 'Download PNG',
+          title: 'Raster figure at three times nominal size',
+          onclick: function () { downloadFigurePng(markup, stem()); }
+        }),
+        h('button', {
+          class: 'btn quiet sm', type: 'button', text: 'Copy as Markdown',
+          onclick: function () {
+            var aimReport = currentAim(id);
+            if (!aimReport) return;
+            copy(App.report.markdownTables[aimReport.name] || '', 'Design matrix');
+          }
+        })
+      ])]);
+
+    registerView(function () {
+      markup = matrixFigureMarkup(id);
+      host.innerHTML = markup || '';
+      if (!markup) {
+        clear(host);
+        host.appendChild(h('div', {
+          class: 'notice',
+          text: 'This aim is disabled in the allocation panel, so it has no solved design matrix.'
+        }));
+        caption.textContent = '';
+        return;
+      }
+      var record = currentAim(id);
+      caption.textContent = 'Durations are means; jitter moves every level. '
+        + record.protocolLabel + ', TR ' + H.round(record.trMs / 1000, 2) + ' s.';
+    });
+
+    return node;
+  }
+
+
+
+  /* ---------------------------------------------------------- aim toggles */
+
+  /* Which aims the budget is spent on, on the overview rather than three
+   * clicks away in the allocation panel: switching one off hands its share to
+   * the aims that are left, so "all of it on Aim 3" is one click. */
+  function buildAimToggleCard() {
+    var strip = h('div', { class: 'seg' });
+    var buttons = {};
+
+    function apply(message) {
+      M.normaliseAllocation(App.state, null);
+      App.refresh();
+      toast(message, 'ok');
+    }
+
+    M.AIM_IDS.forEach(function (id) {
+      var button = h('button', { type: 'button' });
+      button.addEventListener('click', function () {
+        var aim = App.state.aims[id];
+        aim.enabled = !aim.enabled;
+        apply(aim.name + (aim.enabled ? ' is back in the budget' : ' dropped; its hours go to the rest'));
+      });
+      buttons[id] = button;
+      strip.appendChild(button);
+    });
+
+    function only(id) {
+      M.AIM_IDS.forEach(function (other) {
+        App.state.aims[other].enabled = other === id;
+        App.state.aims[other].locked = false;
+      });
+      App.state.aims[id].requestedPct = 100;
+      apply('Every usable hour is on ' + App.state.aims[id].name);
+    }
+
+    var presets = h('div', { class: 'btn-row mt' }, [
+      h('button', {
+        class: 'btn quiet sm', type: 'button', text: 'All aims',
+        title: 'Put every aim back in the budget',
+        onclick: function () {
+          M.AIM_IDS.forEach(function (id) { App.state.aims[id].enabled = true; });
+          apply('Every aim is back in the budget');
+        }
+      })
+    ].concat(M.AIM_IDS.map(function (id) {
+      return h('button', {
+        class: 'btn quiet sm', type: 'button', text: 'Only ' + App.state.aims[id].short,
+        title: 'Spend the whole envelope on ' + App.state.aims[id].name,
+        onclick: function () { only(id); }
+      });
+    })).concat([
+      h('button', {
+        class: 'btn quiet sm', type: 'button', text: 'Equal split',
+        title: 'Divide the envelope evenly between the aims that are on',
+        onclick: function () {
+          var active = M.AIM_IDS.filter(function (id) { return App.state.aims[id].enabled; });
+          if (!active.length) { toast('No aims are enabled', 'bad'); return; }
+          active.forEach(function (id) {
+            App.state.aims[id].locked = false;
+            App.state.aims[id].requestedPct = H.round(100 / active.length, 2);
+          });
+          apply('Envelope split evenly across ' + matrixCount(active.length, 'aim'));
+        }
+      })
+    ]));
+
+    var note = h('div', { class: 'muted', style: 'font-size:11px;margin-top:8px' });
+
+    registerView(function (report) {
+      M.AIM_IDS.forEach(function (id) {
+        var aim = App.state.aims[id];
+        var solved = report.totals.byAim.filter(function (entry) { return entry.id === id; })[0];
+        buttons[id].classList.toggle('active', !!aim.enabled);
+        buttons[id].textContent = aim.short + (aim.enabled
+          ? ' · ' + H.round(H.num(aim.requestedPct), 1) + '%'
+          : ' · off');
+        buttons[id].title = aim.enabled
+          ? 'Drop ' + aim.name + ' and hand its hours to the other aims'
+          + (solved ? ' (currently ' + H.round(solved.hours, 1) + ' h)' : '')
+          : 'Put ' + aim.name + ' back in the budget';
+      });
+
+      var on = report.totals.byAim;
+      if (!on.length) {
+        note.textContent = 'No aims are enabled, so nothing is scheduled and the whole '
+          + H.round(report.budget.usableHours, 1) + ' h envelope is unspent.';
+        return;
+      }
+      note.textContent = on.map(function (entry) {
+        return entry.short + ' ' + H.round(entry.hours, 1) + ' h / '
+          + H.fmtNumber(entry.primaryQuestions) + ' questions';
+      }).join(' · ') + ' — ' + H.round(report.totals.hours, 1) + ' h of '
+        + H.round(report.budget.usableHours, 1) + ' h usable, '
+        + matrixCount(report.totals.sessions, 'session') + ' over '
+        + report.totals.weeks + ' weeks.';
+    });
+
+    return card('Aims in play', 'Switch an aim out and its hours go to the others',
+      [strip, presets, note]);
+  }
+
+  /* --------------------------------------------------------- study figure */
+
+  /* Everything the three aims commit to, on three shared axes: one trial, one
+   * session and the whole scanner-hour envelope.  Because the rows share a
+   * scale, the comparison the aim panels cannot make - a Time-Series trial
+   * against a GLM trial - is the thing you see first. */
+
+  function studyBarText(fill) {
+    return fill === '#046A38' || fill === '#00482B' ? '#F2F1F0' : '#101820';
+  }
+
+  function studyRuler(svg, x0, span, total, y, unit) {
+    var step = timelineTickStep(total);
+    for (var mark = 0; mark <= total + 0.001; mark += step) {
+      var x = x0 + span * (mark / total);
+      svg.push('<line x1="' + H.round(x, 2) + '" y1="' + (y - 5) + '" x2="' + H.round(x, 2)
+        + '" y2="' + y + '" stroke="#6b767b" stroke-width="1"/>');
+      svg.push('<text x="' + H.round(x, 2) + '" y="' + (y + 12) + '" text-anchor="middle" '
+        + 'font-family="' + TIMELINE_MONO + '" font-size="10" fill="#6b767b">'
+        + timelineSeconds(mark) + '</text>');
+    }
+    svg.push('<text x="' + (x0 - 10) + '" y="' + (y + 12) + '" text-anchor="end" font-family="'
+      + TIMELINE_SANS + '" font-size="10" fill="#6b767b">' + unit + '</text>');
+  }
+
+  function studyFigureMarkup() {
+    var report = App.report;
+    if (!report) return '';
+    var aims = report.aims.filter(function (aim) { return aim.enabled; });
+    if (!aims.length) return '';
+
+    var width = 1180;
+    var gutter = 116;
+    var padLeft = 22;
+    var padRight = 22;
+    var trail = 148;
+    var barSpan = width - padRight - padLeft - gutter - trail;
+    var x0 = padLeft + gutter;
+    var barHeight = 24;
+    var rowPitch = 34;
+
+    var svg = [];
+    var y = 30;
+
+    function heading(text, y) {
+      svg.push('<text x="' + padLeft + '" y="' + y + '" font-family="' + TIMELINE_SANS
+        + '" font-size="10.5" letter-spacing="1.6" font-weight="600" fill="#00482B">'
+        + text.toUpperCase() + '</text>');
+    }
+
+    function rowLabel(text, y) {
+      svg.push('<text x="' + (x0 - 12) + '" y="' + y + '" text-anchor="end" font-family="'
+        + TIMELINE_SANS + '" font-size="12" font-weight="600" fill="#101820">'
+        + timelineEscape(text) + '</text>');
+    }
+
+    function trailing(x, y, text) {
+      svg.push('<text x="' + H.round(x + 10, 2) + '" y="' + y + '" font-family="' + TIMELINE_MONO
+        + '" font-size="10.5" fill="#3d4a4f">' + timelineEscape(text) + '</text>');
+    }
+
+    /* ---- one trial per aim, all on the same seconds scale */
+    heading('Trial · same seconds scale for every aim', y);
+    y += 12;
+    var trialScale = Math.max.apply(null, aims.map(function (aim) {
+      return H.num(aim.derived.trialMean);
+    })) || 1;
+
+    aims.forEach(function (aim) {
+      var cursor = x0;
+      rowLabel(aim.short, y + 16);
+      aim.phases.forEach(function (phase) {
+        var mean = (H.num(phase.min) + Math.max(H.num(phase.min), H.num(phase.max))) / 2;
+        var segment = barSpan * (mean / trialScale);
+        svg.push('<rect x="' + H.round(cursor, 2) + '" y="' + y + '" width="'
+          + H.round(Math.max(segment, 0.6), 2) + '" height="' + barHeight + '" fill="'
+          + (TIMELINE_ROLE_FILL[phase.role] || TIMELINE_ROLE_FILL.other)
+          + '" stroke="#ffffff" stroke-width="0.8"/>');
+        cursor += segment;
+      });
+      svg.push('<rect x="' + x0 + '" y="' + y + '" width="'
+        + H.round(cursor - x0, 2) + '" height="' + barHeight
+        + '" fill="none" stroke="#b9c0b4" stroke-width="1"/>');
+      trailing(cursor, y + 16, H.round(aim.derived.trialMean, 1) + ' s · '
+        + H.fmtNumber(aim.derived.totalTrials) + ' trials');
+      y += rowPitch;
+    });
+    studyRuler(svg, x0, barSpan, trialScale, y - 4, 'seconds');
+    y += 30;
+
+    /* ---- one session per aim, all on the same minutes scale */
+    heading('Session · same minutes scale for every aim', y);
+    y += 12;
+    var sessionScale = Math.max.apply(null, aims.map(function (aim) {
+      return H.num(aim.derived.sessionMeanMinutes);
+    })) || 1;
+
+    aims.forEach(function (aim) {
+      var colour = AIM_COLOURS[aim.id] || '#046A38';
+      var parts = [];
+      if (aim.derived.sessionSetupMinutes > 0) {
+        parts.push({ span: aim.derived.sessionSetupMinutes, fill: '#B9C0B4' });
+      }
+      matrixRepeat(parts, aim.structure.runsPerSession, aim.derived.runMean / 60,
+        'run', aim.derived.sessionBreakMinutes, 'brk')
+        .forEach(function (part) {
+          if (part.fill) return;
+          part.fill = part.kind === 'run' ? colour : '#F8E08E';
+        });
+
+      var cursor = x0;
+      rowLabel(aim.short, y + 16);
+      parts.forEach(function (part) {
+        var segment = barSpan * (part.span / sessionScale);
+        svg.push('<rect x="' + H.round(cursor, 2) + '" y="' + y + '" width="'
+          + H.round(Math.max(segment, 0.6), 2) + '" height="' + barHeight + '" fill="' + part.fill
+          + '" stroke="#ffffff" stroke-width="0.8"/>');
+        cursor += segment;
+      });
+      svg.push('<rect x="' + x0 + '" y="' + y + '" width="' + H.round(cursor - x0, 2)
+        + '" height="' + barHeight + '" fill="none" stroke="#b9c0b4" stroke-width="1"/>');
+      trailing(cursor, y + 16, H.round(aim.derived.sessionMeanMinutes, 0) + ' min · '
+        + matrixCount(aim.derived.sessions, 'session'));
+      y += rowPitch;
+    });
+    studyRuler(svg, x0, barSpan, sessionScale, y - 4, 'minutes');
+    y += 34;
+
+    /* ---- the whole envelope, stacked by aim */
+    var usable = Math.max(0.01, H.num(report.budget.usableHours));
+    var committed = H.num(report.totals.hours);
+    var scale = Math.max(usable, committed);
+    var envelopeSpan = width - padRight - x0;
+    heading('Scanner-hour budget · ' + H.round(committed, 1) + ' h committed of '
+      + H.round(usable, 1) + ' h usable', y);
+    y += 12;
+
+    var envelopeTop = y;
+    var cursor = x0;
+    rowLabel('Total', envelopeTop + 21);
+    aims.forEach(function (aim) {
+      var segment = envelopeSpan * (H.num(aim.derived.totalHours) / scale);
+      var fill = AIM_COLOURS[aim.id] || '#046A38';
+      svg.push('<rect x="' + H.round(cursor, 2) + '" y="' + envelopeTop + '" width="'
+        + H.round(Math.max(segment, 0.6), 2) + '" height="34" fill="' + fill
+        + '" stroke="#ffffff" stroke-width="1"/>');
+      if (segment > 62) {
+        svg.push('<text x="' + H.round(cursor + segment / 2, 2) + '" y="' + (envelopeTop + 21)
+          + '" text-anchor="middle" font-family="' + TIMELINE_MONO + '" font-size="11" fill="'
+          + studyBarText(fill) + '">' + timelineEscape(aim.short) + ' · '
+          + H.round(aim.derived.totalHours, 1) + ' h</text>');
+      }
+      cursor += segment;
+    });
+    if (committed < usable) {
+      var spare = x0 + envelopeSpan - cursor;
+      svg.push('<rect x="' + H.round(cursor, 2) + '" y="' + envelopeTop + '" width="'
+        + H.round(spare, 2) + '" height="34" fill="#F2F1F0" stroke="#b9c0b4" stroke-width="1"/>');
+      if (spare > 96) {
+        svg.push('<text x="' + H.round(cursor + spare / 2, 2) + '" y="' + (envelopeTop + 21)
+          + '" text-anchor="middle" font-family="' + TIMELINE_MONO + '" font-size="11" '
+          + 'fill="#6b767b">' + H.round(usable - committed, 1) + ' h unallocated</text>');
+      }
+    }
+    svg.push('<rect x="' + x0 + '" y="' + envelopeTop + '" width="' + envelopeSpan
+      + '" height="34" fill="none" stroke="#b9c0b4" stroke-width="1"/>');
+
+    /* The cap only needs marking when the aims have run past it. */
+    if (committed > usable) {
+      var capX = x0 + envelopeSpan * (usable / scale);
+      svg.push('<line x1="' + H.round(capX, 2) + '" y1="' + (envelopeTop - 6) + '" x2="'
+        + H.round(capX, 2) + '" y2="' + (envelopeTop + 40)
+        + '" stroke="#a8422b" stroke-width="2"/>');
+      svg.push('<text x="' + H.round(capX + 6, 2) + '" y="' + (envelopeTop + 50)
+        + '" font-family="' + TIMELINE_SANS + '" font-size="10.5" fill="#a8422b">budget cap '
+        + H.round(usable, 1) + ' h · over by ' + H.round(committed - usable, 1) + ' h</text>');
+      y += 14;
+    }
+    y += 34;
+    studyRuler(svg, x0, envelopeSpan, scale, y + 2, 'hours');
+    y += 30;
+
+    /* ---- what each aim buys with its share */
+    aims.forEach(function (aim) {
+      var fill = AIM_COLOURS[aim.id] || '#046A38';
+      svg.push('<rect x="' + padLeft + '" y="' + (y - 9) + '" width="11" height="11" fill="' + fill
+        + '" stroke="#b9c0b4" stroke-width="1"/>');
+      svg.push('<text x="' + (padLeft + 18) + '" y="' + y + '" font-family="' + TIMELINE_SANS
+        + '" font-size="11" fill="#101820" font-weight="600">' + timelineEscape(aim.name)
+        + '</text>');
+      svg.push('<text x="' + (width - padRight) + '" y="' + y + '" text-anchor="end" font-family="'
+        + TIMELINE_MONO + '" font-size="10.5" fill="#3d4a4f">'
+        + H.round(aim.derived.totalHours, 1) + ' h · ' + H.round(aim.derived.sharePct, 1) + '% · '
+        + matrixCount(aim.derived.sessions, 'session') + ' · '
+        + H.fmtNumber(aim.derived.totalTrials) + ' trials · '
+        + H.fmtNumber(aim.derived.primaryQuestions) + ' questions · '
+        + H.round(aim.derived.trialMean, 1) + ' s trial</text>');
+      y += 17;
+    });
+
+    /* ---- trial phase roles, shared with the per-aim figures */
+    y += 12;
+    var legendX = padLeft;
+    var seen = {};
+    aims.forEach(function (aim) {
+      aim.phases.forEach(function (phase) {
+        var role = phase.role || 'other';
+        if (seen[role]) return;
+        seen[role] = true;
+        var span = 26 + role.length * 6.4;
+        if (legendX + span > width - padRight) { legendX = padLeft; y += 18; }
+        svg.push('<rect x="' + legendX + '" y="' + (y - 9) + '" width="11" height="11" fill="'
+          + (TIMELINE_ROLE_FILL[role] || TIMELINE_ROLE_FILL.other)
+          + '" stroke="#b9c0b4" stroke-width="1"/>');
+        svg.push('<text x="' + (legendX + 16) + '" y="' + y + '" font-family="' + TIMELINE_SANS
+          + '" font-size="10.5" fill="#3d4a4f">' + timelineEscape(role) + '</text>');
+        legendX += span;
+      });
+    });
+    [['#B9C0B4', 'setup and anatomicals'], ['#F8E08E', 'in-scanner break']].forEach(function (pair) {
+      var span = 26 + pair[1].length * 6.4;
+      if (legendX + span > width - padRight) { legendX = padLeft; y += 18; }
+      svg.push('<rect x="' + legendX + '" y="' + (y - 9) + '" width="11" height="11" fill="'
+        + pair[0] + '" stroke="#b9c0b4" stroke-width="1"/>');
+      svg.push('<text x="' + (legendX + 16) + '" y="' + y + '" font-family="' + TIMELINE_SANS
+        + '" font-size="10.5" fill="#3d4a4f">' + pair[1] + '</text>');
+      legendX += span;
+    });
+
+    var height = y + 16;
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + width + ' ' + height
+      + '" width="' + width + '" height="' + height + '" role="img">'
+      + '<title>' + timelineEscape(report.meta.studyTitle || 'Study') + ' - every aim on one scale</title>'
+      + '<rect width="' + width + '" height="' + height + '" fill="#ffffff"/>'
+      + svg.join('') + '</svg>';
+  }
+
+  function buildStudyFigureCard() {
+    var host = h('div', { class: 'timeline-figure' });
+    var caption = h('div', { class: 'plot-caption' });
+    var markup = '';
+
+    var node = card('Every aim on one scale',
+      'Trial, session and scanner-hour budget across the whole study',
+      [host, caption, h('div', { class: 'btn-row mt' }, [
+        h('button', {
+          class: 'btn quiet sm', type: 'button', text: 'Download SVG',
+          title: 'Vector figure for a manuscript or a grant page',
+          onclick: function () { downloadFigureSvg(markup, 'study-all-aims'); }
+        }),
+        h('button', {
+          class: 'btn quiet sm', type: 'button', text: 'Download PNG',
+          title: 'Raster figure at three times nominal size',
+          onclick: function () { downloadFigurePng(markup, 'study-all-aims'); }
+        }),
+        h('button', {
+          class: 'btn quiet sm', type: 'button', text: 'Copy budget table',
+          onclick: function () {
+            copy(App.report.markdownTables['Budget and allocation'] || '', 'Budget and allocation');
+          }
+        })
+      ])]);
+
+    registerView(function (report) {
+      markup = studyFigureMarkup();
+      host.innerHTML = markup || '';
+      if (!markup) {
+        clear(host);
+        host.appendChild(h('div', {
+          class: 'notice',
+          text: 'Enable at least one aim in the allocation panel to draw the study figure.'
+        }));
+        caption.textContent = '';
+        return;
+      }
+      caption.textContent = 'Trial and session rows share one scale each, so the aims are directly '
+        + 'comparable; durations are means. ' + H.fmtNumber(report.totals.trials) + ' trials over '
+        + matrixCount(report.totals.sessions, 'session') + ', '
+        + H.round(report.totals.hours, 1) + ' h of scanner time at '
+        + H.round(report.totals.utilisationPct, 1) + '% of the usable budget.';
+    });
+
     return node;
   }
 
@@ -2784,6 +3854,7 @@
   App.dropControls = dropControls;
   App.start = start;
   App.currentAim = currentAim;
+  App.mergeState = mergeState;
 
   global.PlannerApp = App;
 }(window));
