@@ -38,7 +38,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `static/js/efficiency.js` | HRF convolution, design matrix, contrast efficiency, decode diagnostics |
 | `static/js/ui.js` | Control factories and panels |
 | `static/js/protocols.js` | Scanner parameter card editor |
-| `static/js/export.js` | Clipboard, Markdown and workbook export |
+| `static/js/export.js` | Clipboard, Markdown, PsychoPy and workbook export |
 | `scanner-parameters/*.json` | The protocol cards, edited in place |
 | `scanner-parameters/.backups/` | Timestamped snapshot before every save |
 | `presets/` | Saved designs; `current.json` is the autosaved working design |
@@ -184,6 +184,11 @@ per card are kept and any of them can be restored from the Backups view.
 - **XLSX workbook** - summary, design matrix per aim, trial structure, budget and allocation,
   one session timeline per aim, efficiency diagnostics, question bank, data volume, methods
   text, Markdown tables, and one sheet per protocol card with every parameter as saved.
+- **PsychoPy task config** - one `experiment.yaml` per aim, on the lab template, with the
+  scanner block (TR, dummy volumes), `run:` (lead-in and lead-out, blocks per run, trials
+  per block, inter-block rest, label ordering), `trial.phases:` (phase list, durations and
+  jitter) and `conditions:` (per-run counts split between the primary and control
+  conditions) taken from that aim's solved design.
 - **Copy methods text** - a paste-ready narrative generated from the solved design.
 - **Copy Markdown** - any single table, or the whole report, as GitHub-flavoured Markdown.
 - **Design JSON** - the full state plus the solved report.

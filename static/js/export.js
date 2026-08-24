@@ -5,6 +5,7 @@
 
   var App, M, H;
   var methodsBox, markdownBox, markdownPicker, presetHost, presetName;
+  var psychopyButtons, psychopyPicker, psychopyBox;
 
   function download(blob, filename) {
     var url = URL.createObjectURL(blob);
@@ -46,6 +47,59 @@
     var blob = new Blob([M.allMarkdown(App.report)], { type: 'text/markdown' });
     download(blob, 'fmri-design-' + new Date().toISOString().slice(0, 10) + '.md');
     App.toast('Markdown downloaded', 'ok');
+  }
+
+  /* One PsychoPy experiment.yaml per aim: same template every time, with the
+   * scanner, run, trial and conditions blocks taken from that aim's solved
+   * design. */
+  function downloadPsychopy(aim) {
+    var name = M.psychopyFileName(aim);
+    var blob = new Blob([M.psychopyYaml(App.report, aim)], { type: 'text/yaml;charset=utf-8' });
+    download(blob, name);
+    App.toast('PsychoPy config downloaded: ' + name, 'ok');
+  }
+
+  function refreshPsychopy() {
+    if (!App.report || !psychopyButtons) return;
+    var aims = App.report.aims || [];
+
+    App.clear(psychopyButtons);
+    if (!aims.length) {
+      psychopyButtons.appendChild(App.h('span', {
+        class: 'muted', text: 'No aims are enabled, so there is nothing to export.'
+      }));
+    }
+    aims.forEach(function (aim) {
+      var button = App.h('button', {
+        class: 'btn sm', type: 'button', text: aim.name,
+        title: 'Download ' + M.psychopyFileName(aim) + ' for ' + aim.name
+      });
+      button.addEventListener('click', function () { downloadPsychopy(aim); });
+      psychopyButtons.appendChild(button);
+    });
+
+    var previous = psychopyPicker.value;
+    App.clear(psychopyPicker);
+    aims.forEach(function (aim) {
+      psychopyPicker.appendChild(App.h('option', { value: aim.id, text: aim.name }));
+    });
+    if (previous && aims.some(function (aim) { return aim.id === previous; })) {
+      psychopyPicker.value = previous;
+    }
+    renderPsychopyPreview();
+  }
+
+  function currentPsychopyAim() {
+    var aims = (App.report && App.report.aims) || [];
+    return aims.filter(function (aim) {
+      return aim.id === psychopyPicker.value;
+    })[0] || aims[0] || null;
+  }
+
+  function renderPsychopyPreview() {
+    if (!psychopyBox) return;
+    var aim = currentPsychopyAim();
+    psychopyBox.textContent = aim ? M.psychopyYaml(App.report, aim) : '';
   }
 
   function saveDesign(name) {
@@ -282,6 +336,39 @@
       ])
     ]);
 
+    psychopyButtons = App.h('div', { class: 'btn-row' });
+    psychopyPicker = App.h('select', {});
+    psychopyPicker.addEventListener('change', renderPsychopyPreview);
+    psychopyBox = App.h('pre', { class: 'code-box', style: 'max-height:360px' });
+
+    var psychopyCard = App.card('PsychoPy task config', 'One experiment.yaml per aim', [
+      App.h('div', {
+        class: 'notice',
+        text: 'Each file is the lab experiment.yaml template with the scanner block (TR, dummy '
+          + 'volumes), run: (lead-in and lead-out, blocks per run, trials per block, inter-block '
+          + 'rest, label ordering), trial.phases: (the aim\'s phase list, durations and jitter) '
+          + 'and conditions: (per_run counts split between the primary and the control conditions '
+          + 'by the question bank\'s control share) filled in from that aim. Window, text, keys '
+          + 'and instructions are passed through unchanged.'
+      }),
+      psychopyButtons,
+      App.h('div', { class: 'split-inline mt mb' }, [
+        psychopyPicker,
+        App.h('button', {
+          class: 'btn quiet', type: 'button', text: 'Copy YAML',
+          onclick: function () { App.copy(psychopyBox.textContent, 'PsychoPy config'); }
+        }),
+        App.h('button', {
+          class: 'btn quiet', type: 'button', text: 'Download shown',
+          onclick: function () {
+            var aim = currentPsychopyAim();
+            if (aim) downloadPsychopy(aim);
+          }
+        })
+      ]),
+      psychopyBox
+    ]);
+
     presetName = App.h('input', { type: 'text', placeholder: 'preset name' });
     presetHost = App.h('div', { class: 'mt' });
 
@@ -344,7 +431,7 @@
     ]);
 
     panel.appendChild(App.h('div', { class: 'grid split' }, [
-      App.h('div', {}, [methodsCard, exportCard]),
+      App.h('div', {}, [methodsCard, exportCard, psychopyCard]),
       App.h('div', {}, [markdownCard, presetCard])
     ]));
 
@@ -352,6 +439,7 @@
       if (document.activeElement !== methodsBox) methodsBox.value = report.methodsText;
       rebuildPicker();
       refreshMarkdown();
+      refreshPsychopy();
     });
 
     renderPresets();
@@ -365,6 +453,7 @@
     saveDesign: function () { saveDesign('current'); },
     loadDesign: loadDesign,
     downloadPreset: downloadPreset,
+    downloadPsychopy: downloadPsychopy,
     importDesign: importDesign
   };
 }(window));

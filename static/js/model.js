@@ -1530,6 +1530,275 @@
     return blocks.join('\n');
   }
 
+  /* ------------------------------------------------------------- psychopy */
+
+  /* PsychoPy task configuration.  The window, text, key map and instruction
+   * wording come from the lab's experiment.yaml template and are passed
+   * through unchanged; the planner fills in the parts the design actually
+   * decides - the scanner block, the run geometry, the trial phase list and
+   * the per-run condition counts - so the file that ships with an aim always
+   * matches the plan that was costed. */
+
+  /* Template blocks the design has no say in.  Held verbatim so that a diff
+   * against the lab's own experiment.yaml stays empty here. */
+  var PSYCHOPY_PRESENTATION = [
+    'paths:',
+    '  data_dir: data                 # the common JSON database lives here',
+    '  bank: questions/bank.json',
+    '  images_dir: questions/images',
+    '',
+    'window:',
+    '  size: [1280, 800]',
+    '  fullscreen: true',
+    '  screen: 0',
+    '  color: [-1, -1, -1]            # PsychoPy rgb, -1..1  (black)',
+    '  units: height',
+    '  mouse_visible: false',
+    '',
+    'text:',
+    '  font: Arial',
+    '  height: 0.06',
+    '  wrap_width: 1.3',
+    '  color: [1, 1, 1]',
+    '  title_pos: [0, 0.30]           # where views that also show graphics put the text',
+    '',
+    'fixation:',
+    '  text: "+"',
+    '  height: 0.08',
+    '  color: [1, 1, 1]',
+    '',
+    'cue:',
+    '  height: 0.12',
+    '  color: [1, 1, 1]'
+  ];
+
+  var PSYCHOPY_KEYS = [
+    'keys:',
+    '  quit: ["escape"]',
+    '  advance: ["space"]'
+  ];
+
+  /* What the screen shows during a phase, by the phase's planner role. */
+  var PSYCHOPY_SHOW = {
+    fixation: 'fixation',
+    question: 'question',
+    rest: 'blank',
+    answer: 'cue',
+    cue: 'cue',
+    other: 'blank'
+  };
+
+  /* The template's four control conditions.  They share whatever slice of the
+   * run the question bank withholds from the primary condition. */
+  var PSYCHOPY_CONTROLS = [
+    { key: 'passive_read', cue: '○', showQuestion: true, response: 'none' },
+    { key: 'cue_only', cue: '◆', showQuestion: false, response: 'answer', cueFromResponse: true },
+    { key: 'constant_word', cue: '▲', showQuestion: true, response: 'ready' },
+    { key: 'opposite', cue: '✖', showQuestion: true, response: 'opposite' }
+  ];
+
+  /* The template lines its comments up 31 characters past the indent. */
+  var PSYCHOPY_COMMENT_COLUMN = 31;
+
+  function padRight(text, width) {
+    var out = String(text);
+    while (out.length < width) out += ' ';
+    return out;
+  }
+
+  function yamlSlug(text) {
+    var slug = String(text === undefined || text === null ? '' : text)
+      .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    return slug || 'phase';
+  }
+
+  /* Anything interpolated into a comment has to stay on that one line. */
+  function yamlComment(text) {
+    return String(text === undefined || text === null ? '' : text).replace(/\s+/g, ' ').trim();
+  }
+
+  /* Durations keep a decimal point so the YAML stays float-typed. */
+  function yamlSeconds(value) {
+    var rounded = round(num(value), 2);
+    return Math.abs(rounded - Math.round(rounded)) < 0.005
+      ? Math.round(rounded).toFixed(1) : String(rounded);
+  }
+
+  /* A `key: value` line with its comment in the template's column. */
+  function yamlSetting(key, value, comment) {
+    return '  ' + padRight(key + ': ' + value, PSYCHOPY_COMMENT_COLUMN) + '# ' + comment;
+  }
+
+  /* Repeated phase names are the norm - most designs open and close on
+   * fixation - so make them unique the way the template does: _pre and _post
+   * for a pair, numbered beyond that. */
+  function psychopyPhaseNames(phases) {
+    var counts = {};
+    var bases = (phases || []).map(function (phase) {
+      var base = yamlSlug(phase.name);
+      counts[base] = (counts[base] || 0) + 1;
+      return base;
+    });
+    var seen = {};
+    return bases.map(function (base) {
+      if (counts[base] < 2) return base;
+      seen[base] = (seen[base] || 0) + 1;
+      if (counts[base] === 2) return base + (seen[base] === 1 ? '_pre' : '_post');
+      return base + '_' + seen[base];
+    });
+  }
+
+  /* Split one run between the primary condition and the control conditions so
+   * that per_run still sums to n_blocks * trials_per_block. */
+  function psychopyConditions(trialsPerRun, controlPct) {
+    var total = Math.max(0, Math.round(num(trialsPerRun)));
+    var control = Math.min(total, Math.round(total * clamp(num(controlPct), 0, 100) / 100));
+    var each = Math.floor(control / PSYCHOPY_CONTROLS.length);
+    var extra = control - each * PSYCHOPY_CONTROLS.length;
+    return {
+      primary: total - control,
+      rows: PSYCHOPY_CONTROLS.map(function (spec, index) {
+        return { spec: spec, perRun: each + (index < extra ? 1 : 0) };
+      })
+    };
+  }
+
+  function psychopyFileName(aimReport) {
+    return 'experiment-' + yamlSlug(aimReport.short || aimReport.id).replace(/_/g, '-') + '.yaml';
+  }
+
+  function psychopyYaml(report, aimReport) {
+    var structure = aimReport.structure || {};
+    var derived = aimReport.derived || {};
+    var decode = aimReport.decode || {};
+    var bank = report.questionBank || {};
+    var blocksPerRun = Math.max(1, Math.round(num(structure.blocksPerRun, 1)));
+    var trialsPerBlock = Math.max(1, Math.round(num(structure.trialsPerBlock, 1)));
+    var trialsPerRun = blocksPerRun * trialsPerBlock;
+    var runsPerSession = round(num(structure.runsPerSession), 2);
+    var dummyVolumes = Math.max(0, Math.round(num(structure.dummyVolumes)));
+    var yesPct = round(clamp(num(bank.yesPct, 50), 0, 100), 1);
+    var controlPct = round(clamp(num(bank.controlPct), 0, 100), 1);
+    var conditions = psychopyConditions(trialsPerRun, controlPct);
+    var phases = aimReport.phases || [];
+    var names = psychopyPhaseNames(phases);
+    var answerPhase = phases.filter(function (phase) { return phase.role === 'answer'; })[0];
+    var answerWindow = answerPhase ? trim(num(answerPhase.min), 1) + '-second' : 'answer';
+    var lines = [];
+
+    lines.push('# PsychoPy task configuration - generated by the fMRI Experimental Design Planner.');
+    lines.push('# Study:     ' + yamlComment(report.meta.studyTitle));
+    lines.push('# Aim:       ' + yamlComment(aimReport.name)
+      + ' (' + yamlComment(decode.objective) + ')');
+    lines.push('# Protocol:  ' + yamlComment(aimReport.protocol)
+      + ', TR ' + round(num(aimReport.trMs), 1) + ' ms');
+    lines.push('# Generated: ' + report.generated);
+    lines.push('#');
+    lines.push('# One run of this file is ' + trialsPerRun + ' trials, '
+      + fmtRange(derived.runMin, derived.runMax) + '.');
+    lines.push('# The plan calls for ' + runsPerSession + ' run'
+      + (Math.abs(runsPerSession - 1) < 0.01 ? '' : 's') + ' per session across '
+      + fmtNumber(derived.sessions) + ' session' + (derived.sessions === 1 ? '' : 's')
+      + ', ' + fmtNumber(derived.totalTrials) + ' trials in total.');
+    lines.push('# The scanner, run, trial and conditions blocks are filled in from the solved');
+    lines.push('# design. Everything else is the lab template, unchanged.');
+    lines.push('');
+    lines.push('experiment: inner_speech_v2_' + yamlSlug(aimReport.id));
+    lines.push('');
+    lines = lines.concat(PSYCHOPY_PRESENTATION);
+
+    lines.push('');
+    lines.push('scanner:');
+    lines.push(yamlSetting('tr', yamlSeconds(num(aimReport.trMs) / 1000),
+      yamlComment(aimReport.protocol)));
+    lines.push('  trigger_key: "5"');
+    lines.push(yamlSetting('wait_for_triggers', dummyVolumes,
+      'dummy volumes; t=0 is the LAST of these pulses'));
+    lines.push('  log_triggers: true             # every pulse is written to the database');
+
+    lines.push('');
+    lines.push('run:');
+    lines.push('  lead_in: ' + yamlSeconds(structure.leadIn));
+    lines.push('  lead_out: ' + yamlSeconds(structure.leadOut));
+    lines.push('  n_blocks: ' + blocksPerRun);
+    lines.push(yamlSetting('trials_per_block', trialsPerBlock, '-> ' + trialsPerRun + ' trials/run'));
+    lines.push(yamlSetting('inter_block_rest', yamlSeconds(structure.interBlockRest),
+      'rest between blocks, inside the run'));
+    lines.push(yamlSetting('inter_trial_gap', yamlSeconds(structure.interTrialGap),
+      'dead time between successive trials'));
+    lines.push(yamlSetting('label_order', decode.labelOrder || 'intermixed',
+      'how yes and no answers are sequenced'));
+    lines.push(yamlSetting('label_run_length', Math.max(1, Math.round(num(decode.labelRunLength, 1))),
+      'same-label run length (blocked ordering only)'));
+    lines.push(yamlSetting('label_balance_pct', yesPct,
+      'share of primary trials whose answer is yes'));
+
+    lines.push('');
+    lines.push('trial:');
+    lines.push('  round_jitter_to_tr: true');
+    lines.push('  phases:');
+    var nameWidth = 0;
+    names.forEach(function (name) { nameWidth = Math.max(nameWidth, name.length + 2); });
+    phases.forEach(function (phase, index) {
+      var lo = Math.max(0, num(phase.min));
+      var hi = Math.max(lo, num(phase.max));
+      var jittered = hi - lo > 0.001;
+      lines.push('    - {name: ' + padRight(names[index] + ',', nameWidth)
+        + 'show: ' + padRight((PSYCHOPY_SHOW[phase.role] || 'blank') + ',', 10)
+        + 'dur: ' + (jittered ? '[' + yamlSeconds(lo) + ', ' + yamlSeconds(hi) + ']' : yamlSeconds(lo))
+        + (jittered ? ', jitter: ' + (phase.jitter ? 'exponential' : 'uniform') : '')
+        + '}');
+    });
+
+    lines.push('');
+    lines.push('# Trial conditions. `per_run` must sum to n_blocks * trials_per_block ('
+      + trialsPerRun + ').');
+    lines.push('# The control share is the question bank\'s embedded control-trial share ('
+      + controlPct + '%),');
+    lines.push('# split as evenly as the count allows across the four control conditions.');
+    lines.push('# response = the token the participant actually repeats during the answer window.');
+    lines.push('#   answer   -> the true answer          none  -> stay silent');
+    lines.push('#   opposite -> the inverted answer      ready -> the constant word "ready"');
+    lines.push('# cue_from_response: the cue displays the token itself (used for cue-only trials).');
+    lines.push('conditions:');
+    var keyWidth = 'primary:'.length;
+    var countWidth = String(conditions.primary).length;
+    conditions.rows.forEach(function (row) {
+      keyWidth = Math.max(keyWidth, row.spec.key.length + 1);
+      countWidth = Math.max(countWidth, String(row.perRun).length);
+    });
+
+    function conditionLine(key, perRun, spec) {
+      return '  ' + padRight(key + ':', keyWidth + 1)
+        + '{per_run: ' + padRight(perRun + ',', countWidth + 1)
+        + ' cue: "' + spec.cue + '", show_question: ' + padRight(spec.showQuestion + ',', 6)
+        + ' response: ' + spec.response
+        + (spec.cueFromResponse ? ', cue_from_response: true' : '') + '}';
+    }
+
+    lines.push(conditionLine('primary', conditions.primary,
+      { cue: '●', showQuestion: true, response: 'answer' }));
+    conditions.rows.forEach(function (row) {
+      lines.push(conditionLine(row.spec.key, row.perRun, row.spec));
+    });
+
+    lines.push('');
+    lines = lines.concat(PSYCHOPY_KEYS);
+
+    lines.push('');
+    lines.push('instructions: |');
+    lines.push('  When the answer cue appears, silently repeat the correct answer - yes or no -');
+    lines.push('  throughout the entire ' + answerWindow + ' window at a steady, comfortable cadence.');
+    lines.push('');
+    lines.push('  Keep your jaw, tongue, and lips still.');
+    lines.push('  When the cue disappears, stop repeating the word and return to fixation.');
+    lines.push('');
+    lines.push('  Press SPACE when you are ready.');
+    lines.push('');
+
+    return lines.join('\n');
+  }
+
   /* -------------------------------------------------------------- methods */
 
   function buildMethods(report) {
@@ -1981,6 +2250,8 @@
     balanceToTarget: balanceToTarget,
     allMarkdown: allMarkdown,
     mdTable: mdTable,
+    psychopyYaml: psychopyYaml,
+    psychopyFileName: psychopyFileName,
     helpers: {
       num: num, clamp: clamp, round: round, sum: sum, deepCopy: deepCopy,
       fmtNumber: fmtNumber, fmtSeconds: fmtSeconds, fmtRange: fmtRange, trim: trim,
