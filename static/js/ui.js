@@ -51,6 +51,11 @@
 
   function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
 
+  function escapeHtml(text) {
+    return String(text === null || text === undefined ? '' : text)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
   function getPath(root, path) {
     return path.split('.').reduce(function (acc, key) {
       return acc === undefined || acc === null ? undefined : acc[key];
@@ -92,6 +97,79 @@
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done, fallback);
     } else { fallback(); }
+  }
+
+  /* ------------------------------------------------------- rich clipboard */
+
+  /* Word, Google Docs and LibreOffice all build a native table out of the
+   * clipboard's text/html flavour, so "copy for Word" is an HTML <table> with
+   * its borders and alignment already inline.  A tab-separated flavour rides
+   * alongside for anything that only takes plain text. */
+
+  var WORD_CELL = 'border:1px solid #7f7f7f;padding:4pt 6pt;vertical-align:top;';
+
+  function wordTableHtml(table) {
+    var head = table.columns.map(function (label, index) {
+      return '<th style="' + WORD_CELL + 'background:#e8eae6;font-weight:bold;text-align:'
+        + (table.numeric[index] ? 'right' : 'left') + '">' + escapeHtml(label) + '</th>';
+    }).join('');
+    var body = table.rows.map(function (cells) {
+      return '<tr>' + cells.map(function (cell, index) {
+        return '<td style="' + WORD_CELL + 'text-align:'
+          + (table.numeric[index] ? 'right' : 'left') + '">' + escapeHtml(cell) + '</td>';
+      }).join('') + '</tr>';
+    }).join('');
+    return '<meta charset="utf-8">'
+      + (table.caption ? '<p style="font-family:Calibri,Arial,sans-serif;font-size:10pt;'
+        + 'margin:0 0 4pt 0"><b>' + escapeHtml(table.caption) + '</b></p>' : '')
+      + '<table border="1" cellspacing="0" cellpadding="0" style="border-collapse:collapse;'
+      + 'font-family:Calibri,Arial,sans-serif;font-size:10pt">'
+      + '<thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table>';
+  }
+
+  function wordTableText(table) {
+    return (table.caption ? [table.caption] : [])
+      .concat([table.columns.join('\t')])
+      .concat(table.rows.map(function (cells) { return cells.join('\t'); }))
+      .join('\n');
+  }
+
+  /* The old selection-and-execCommand route: it is what keeps the rich copy
+   * working on a plain-http origin, where navigator.clipboard is not there. */
+  function copyRichFallback(html, plain, label) {
+    var holder = h('div', {
+      contenteditable: 'true',
+      style: 'position:fixed;left:-9999px;top:0;white-space:normal'
+    });
+    holder.innerHTML = html;
+    document.body.appendChild(holder);
+    var selection = global.getSelection();
+    var range = document.createRange();
+    range.selectNodeContents(holder);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+    selection.removeAllRanges();
+    document.body.removeChild(holder);
+    if (ok) toast((label || 'Table') + ' copied — paste into Word as a table', 'ok');
+    else copy(plain, label);
+  }
+
+  function copyRichTable(table, label) {
+    var html = wordTableHtml(table);
+    var plain = wordTableText(table);
+    if (!(global.ClipboardItem && navigator.clipboard && navigator.clipboard.write)) {
+      copyRichFallback(html, plain, label);
+      return;
+    }
+    var item = new global.ClipboardItem({
+      'text/html': new Blob([html], { type: 'text/html' }),
+      'text/plain': new Blob([plain], { type: 'text/plain' })
+    });
+    navigator.clipboard.write([item]).then(function () {
+      toast((label || 'Table') + ' copied — paste into Word as a table', 'ok');
+    }, function () { copyRichFallback(html, plain, label); });
   }
 
   /* ---------------------------------------------------------- registries */
@@ -1963,6 +2041,25 @@
     return node;
   }
 
+  /* One source for the design matrix numbers: the card draws it and the Word
+   * copy serialises the same cells. */
+  function designMatrixTable(aim) {
+    return {
+      caption: aim.name + ' — design matrix',
+      columns: ['Level', 'Sequence', 'Trials', 'Approx duration'],
+      numeric: [false, false, true, true],
+      rows: aim.table.map(function (row) {
+        return [row.level, row.sequence, H.fmtNumber(row.trials), row.duration];
+      })
+    };
+  }
+
+  function copyDesignMatrixForWord(id) {
+    var aim = currentAim(id);
+    if (!aim) { toast('This aim is disabled, so it has no design matrix.', 'bad'); return; }
+    copyRichTable(designMatrixTable(aim), 'Design matrix');
+  }
+
   function buildDesignTableCard(id) {
     var host = h('div', {});
     var node = flushCard('Design matrix', null, [host], h('div', { class: 'btn-row' }, [
@@ -1973,6 +2070,12 @@
           if (!aim) return;
           copy(App.report.markdownTables[aim.name] || '', 'Design matrix');
         }
+      }),
+      h('button', {
+        class: 'btn quiet sm', type: 'button', text: 'Copy for Word',
+        title: 'Puts the table on the clipboard as rich text: paste into Word, '
+          + 'Google Docs or LibreOffice and it lands as a real table',
+        onclick: function () { copyDesignMatrixForWord(id); }
       })
     ]));
 
@@ -1983,14 +2086,17 @@
         host.appendChild(h('div', { class: 'notice', text: 'This aim is disabled in the allocation panel.' }));
         return;
       }
+      var table = designMatrixTable(aim);
       host.appendChild(dataTable(
-        [{ label: 'Level' }, { label: 'Sequence' }, { label: 'Trials', num: true }, { label: 'Approx duration', num: true }],
-        aim.table.map(function (row) {
+        table.columns.map(function (label, index) {
+          return { label: label, num: table.numeric[index] };
+        }),
+        table.rows.map(function (cells) {
           return [
-            { text: row.level, className: 'level' },
-            { text: row.sequence, className: 'seq' },
-            { text: H.fmtNumber(row.trials), num: true },
-            { text: row.duration, num: true }
+            { text: cells[0], className: 'level' },
+            { text: cells[1], className: 'seq' },
+            { text: cells[2], num: true },
+            { text: cells[3], num: true }
           ];
         })
       ));
@@ -2020,11 +2126,6 @@
   };
   var TIMELINE_ROLE_DARK = { question: true, cue: true };
 
-  function timelineEscape(text) {
-    return String(text === null || text === undefined ? '' : text)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-
   function timelineClip(text, budget) {
     var value = String(text || '');
     if (budget < 4 || value.length <= budget) return value;
@@ -2042,6 +2143,12 @@
     var parts = ['<rect x="' + x + '" y="' + y + '" width="' + size + '" height="' + size
       + '" rx="3" fill="#101820" stroke="#00482B" stroke-width="1.5"/>'];
 
+    if (role === 'rest') {
+      /* Rest is a blank screen: the participant sees nothing at all, so
+       * nothing is drawn inside the frame. */
+      return parts.join('');
+    }
+
     if (role === 'question') {
       var inset = Math.round(size * 0.17);
       var lineX = x + inset;
@@ -2054,24 +2161,28 @@
           + H.round(usable * 0.84 * fraction, 1) + '" height="3" rx="1.5" fill="#F2F1F0"/>');
       });
     } else if (role === 'answer') {
-      parts.push('<circle cx="' + cx + '" cy="' + (cy - 6) + '" r="8" fill="#CBA052"/>');
-      parts.push('<text x="' + cx + '" y="' + (cy + 20)
-        + '" text-anchor="middle" font-family="' + TIMELINE_MONO
-        + '" font-size="11" fill="#DCD59A">yes / no</text>');
-    } else if (role === 'rest') {
-      parts.push('<circle cx="' + cx + '" cy="' + cy + '" r="' + H.round(size * 0.24, 1)
-        + '" fill="none" stroke="#3d4a4f" stroke-width="1.2" stroke-dasharray="3 4"/>');
-      parts.push('<circle cx="' + cx + '" cy="' + cy + '" r="5" fill="#ffffff"/>');
+      /* The answer cue is a bare white cross in the centre and nothing else:
+       * sized off the screen, because the figure is drawn wide and the card
+       * scales it down. */
+      var arm = H.round(size * 0.16, 1);
+      var armStroke = H.round(size * 0.036, 2);
+      parts.push('<line x1="' + H.round(cx - arm, 1) + '" y1="' + cy + '" x2="'
+        + H.round(cx + arm, 1) + '" y2="' + cy + '" stroke="#ffffff" stroke-width="'
+        + armStroke + '"/>');
+      parts.push('<line x1="' + cx + '" y1="' + H.round(cy - arm, 1) + '" x2="' + cx
+        + '" y2="' + H.round(cy + arm, 1) + '" stroke="#ffffff" stroke-width="'
+        + armStroke + '"/>');
     } else if (role === 'cue') {
-      var arm = Math.round(size * 0.2);
-      parts.push('<polygon points="' + cx + ',' + (cy - arm) + ' ' + (cx + arm) + ','
-        + (cy + arm) + ' ' + (cx - arm) + ',' + (cy + arm)
+      var side = Math.round(size * 0.2);
+      parts.push('<polygon points="' + cx + ',' + (cy - side) + ' ' + (cx + side) + ','
+        + (cy + side) + ' ' + (cx - side) + ',' + (cy + side)
         + '" fill="none" stroke="#ffffff" stroke-width="1.8"/>');
-      parts.push('<circle cx="' + cx + '" cy="' + (cy + arm * 0.25) + '" r="2.5" fill="#ffffff"/>');
+      parts.push('<circle cx="' + cx + '" cy="' + (cy + side * 0.25) + '" r="2.5" fill="#ffffff"/>');
     } else if (role === 'fixation') {
-      parts.push('<circle cx="' + cx + '" cy="' + cy + '" r="7" fill="#ffffff"/>');
+      parts.push('<circle cx="' + cx + '" cy="' + cy + '" r="' + H.round(size * 0.062, 1)
+        + '" fill="#ffffff"/>');
     } else {
-      var side = Math.round(size * 0.3);
+      side = Math.round(size * 0.3);
       parts.push('<rect x="' + (cx - side / 2) + '" y="' + (cy - side / 2) + '" width="' + side
         + '" height="' + side + '" fill="none" stroke="#ffffff" stroke-width="1.6"/>');
     }
@@ -2143,7 +2254,7 @@
     var svg = [];
     svg.push('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + width + ' ' + height
       + '" width="' + width + '" height="' + height + '" role="img">');
-    svg.push('<title>' + timelineEscape(aim.name) + ' trial timeline</title>');
+    svg.push('<title>' + escapeHtml(aim.name) + ' trial timeline</title>');
     svg.push('<defs><pattern id="tl-jitter-' + id + '" width="7" height="7" '
       + 'patternTransform="rotate(45)" patternUnits="userSpaceOnUse">'
       + '<rect width="7" height="7" fill="#ffffff" fill-opacity="0"/>'
@@ -2159,8 +2270,8 @@
       var label = timelineClip(step.name, Math.floor(colWidth / 7.2));
       svg.push('<text x="' + centre + '" y="' + nameY + '" text-anchor="middle" font-family="'
         + TIMELINE_SANS + '" font-size="13" font-weight="600" fill="#101820">'
-        + '<title>' + timelineEscape(step.name) + '</title>'
-        + timelineEscape(label) + '</text>');
+        + '<title>' + escapeHtml(step.name) + '</title>'
+        + escapeHtml(label) + '</text>');
 
       var bounds = step.min === step.max
         ? timelineSeconds(step.min) + ' s'
@@ -2248,7 +2359,7 @@
         + (TIMELINE_ROLE_FILL[item.role] || TIMELINE_ROLE_FILL.other)
         + '" stroke="#b9c0b4" stroke-width="1"/>');
       svg.push('<text x="' + (legendX + 16) + '" y="' + legendY + '" font-family="' + TIMELINE_SANS
-        + '" font-size="10.5" fill="#3d4a4f">' + timelineEscape(label) + '</text>');
+        + '" font-size="10.5" fill="#3d4a4f">' + escapeHtml(label) + '</text>');
       legendX += 26 + label.length * 6.4;
     });
     svg.push('<rect x="' + legendX + '" y="' + (legendY - 9) + '" width="11" height="11" '
@@ -2314,7 +2425,7 @@
     var markup = '';
 
     var node = card('Trial timeline',
-      'One trial as the participant experiences it',
+      '',
       [host, caption, h('div', { class: 'btn-row mt' }, [
         h('button', {
           class: 'btn quiet sm', type: 'button', text: 'Download SVG',
@@ -2531,7 +2642,7 @@
         + row.level.toUpperCase() + '</text>');
       svg.push('<text x="' + (width - padRight) + '" y="' + (barTop - 7) + '" text-anchor="end" '
         + 'font-family="' + TIMELINE_SANS + '" font-size="11" fill="#3d4a4f">'
-        + timelineEscape(row.note) + '</text>');
+        + escapeHtml(row.note) + '</text>');
 
       var cursor = 0;
       var thin = row.parts.length > 1
@@ -2613,14 +2724,14 @@
       svg.push('<rect x="' + legendX + '" y="' + (legendY - 9) + '" width="11" height="11" fill="'
         + entry.fill + '" stroke="#b9c0b4" stroke-width="1"/>');
       svg.push('<text x="' + (legendX + 16) + '" y="' + legendY + '" font-family="' + TIMELINE_SANS
-        + '" font-size="10.5" fill="#3d4a4f">' + timelineEscape(entry.label) + '</text>');
+        + '" font-size="10.5" fill="#3d4a4f">' + escapeHtml(entry.label) + '</text>');
       legendX += span;
     });
 
     var height = legendY + 14;
     return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + width + ' ' + height
       + '" width="' + width + '" height="' + height + '" role="img">'
-      + '<title>' + timelineEscape(App.state.aims[id].name) + ' design matrix</title>'
+      + '<title>' + escapeHtml(App.state.aims[id].name) + ' design matrix</title>'
       + '<rect width="' + width + '" height="' + height + '" fill="#ffffff"/>'
       + svg.join('') + '</svg>';
   }
@@ -2653,6 +2764,12 @@
             if (!aimReport) return;
             copy(App.report.markdownTables[aimReport.name] || '', 'Design matrix');
           }
+        }),
+        h('button', {
+          class: 'btn quiet sm', type: 'button', text: 'Copy for Word',
+          title: 'Puts the table on the clipboard as rich text: paste into Word, '
+            + 'Google Docs or LibreOffice and it lands as a real table',
+          onclick: function () { copyDesignMatrixForWord(id); }
         })
       ])]);
 
@@ -2832,12 +2949,12 @@
     function rowLabel(text, y) {
       svg.push('<text x="' + (x0 - 12) + '" y="' + y + '" text-anchor="end" font-family="'
         + TIMELINE_SANS + '" font-size="12" font-weight="600" fill="#101820">'
-        + timelineEscape(text) + '</text>');
+        + escapeHtml(text) + '</text>');
     }
 
     function trailing(x, y, text) {
       svg.push('<text x="' + H.round(x + 10, 2) + '" y="' + y + '" font-family="' + TIMELINE_MONO
-        + '" font-size="10.5" fill="#3d4a4f">' + timelineEscape(text) + '</text>');
+        + '" font-size="10.5" fill="#3d4a4f">' + escapeHtml(text) + '</text>');
     }
 
     /* ---- one trial per aim, all on the same seconds scale */
@@ -2928,7 +3045,7 @@
       if (segment > 62) {
         svg.push('<text x="' + H.round(cursor + segment / 2, 2) + '" y="' + (envelopeTop + 21)
           + '" text-anchor="middle" font-family="' + TIMELINE_MONO + '" font-size="11" fill="'
-          + studyBarText(fill) + '">' + timelineEscape(aim.short) + ' · '
+          + studyBarText(fill) + '">' + escapeHtml(aim.short) + ' · '
           + H.round(aim.derived.totalHours, 1) + ' h</text>');
       }
       cursor += segment;
@@ -2967,7 +3084,7 @@
       svg.push('<rect x="' + padLeft + '" y="' + (y - 9) + '" width="11" height="11" fill="' + fill
         + '" stroke="#b9c0b4" stroke-width="1"/>');
       svg.push('<text x="' + (padLeft + 18) + '" y="' + y + '" font-family="' + TIMELINE_SANS
-        + '" font-size="11" fill="#101820" font-weight="600">' + timelineEscape(aim.name)
+        + '" font-size="11" fill="#101820" font-weight="600">' + escapeHtml(aim.name)
         + '</text>');
       svg.push('<text x="' + (width - padRight) + '" y="' + y + '" text-anchor="end" font-family="'
         + TIMELINE_MONO + '" font-size="10.5" fill="#3d4a4f">'
@@ -2994,7 +3111,7 @@
           + (TIMELINE_ROLE_FILL[role] || TIMELINE_ROLE_FILL.other)
           + '" stroke="#b9c0b4" stroke-width="1"/>');
         svg.push('<text x="' + (legendX + 16) + '" y="' + y + '" font-family="' + TIMELINE_SANS
-          + '" font-size="10.5" fill="#3d4a4f">' + timelineEscape(role) + '</text>');
+          + '" font-size="10.5" fill="#3d4a4f">' + escapeHtml(role) + '</text>');
         legendX += span;
       });
     });
@@ -3011,7 +3128,7 @@
     var height = y + 16;
     return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + width + ' ' + height
       + '" width="' + width + '" height="' + height + '" role="img">'
-      + '<title>' + timelineEscape(report.meta.studyTitle || 'Study') + ' - every aim on one scale</title>'
+      + '<title>' + escapeHtml(report.meta.studyTitle || 'Study') + ' - every aim on one scale</title>'
       + '<rect width="' + width + '" height="' + height + '" fill="#ffffff"/>'
       + svg.join('') + '</svg>';
   }
