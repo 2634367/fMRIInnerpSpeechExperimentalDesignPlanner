@@ -2634,7 +2634,7 @@
       return timelineFileStem(id).replace('-trial-timeline', '-design-matrix');
     }
 
-    var node = card('Design matrix figure',
+    var node = card('Design matrix figure', "" ,
       [host, caption, h('div', { class: 'btn-row mt' }, [
         h('button', {
           class: 'btn quiet sm', type: 'button', text: 'Download SVG',

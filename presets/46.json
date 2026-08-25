@@ -1,0 +1,458 @@
+{
+  "version": 1,
+  "meta": {
+    "studyTitle": "Dense Single-Participant fMRI Decoding of Prompted Binary Inner Speech",
+    "investigator": "",
+    "institution": "Wright State University",
+    "participantId": "SUB-01",
+    "designId": "DESIGN-001",
+    "notes": "One healthy adult, age 18-60, native English speaker, no MRI contraindications."
+  },
+  "budget": {
+    "totalScannerHours": 45,
+    "contingencyPct": 8,
+    "solveMode": "fill",
+    "sessionModel": "dedicated",
+    "targetQuestionsTotal": 6000,
+    "allocationUnit": "percent",
+    "sessionsPerWeek": 3,
+    "weeksAvailable": 16,
+    "countOverheadAgainstBudget": true,
+    "autoClamp": true
+  },
+  "caps": {
+    "applyTo": "expected",
+    "maxRunMinutes": 20,
+    "maxSessionMinutes": 120,
+    "maxRunsPerSession": 8,
+    "maxSessionsTotal": 100,
+    "maxContinuousMinutes": 25,
+    "minQuestionsPerAim": 50
+  },
+  "session": {
+    "screeningMinutes": 6,
+    "positioningMinutes": 5,
+    "practiceMinutes": 4,
+    "breakMinutes": 3,
+    "structurals": [
+      {
+        "protocol": "fMRI-Survey-Parameters",
+        "enabled": true,
+        "count": 1
+      },
+      {
+        "protocol": "fMRI-SENSE-Reference-Parameters",
+        "enabled": true,
+        "count": 1
+      },
+      {
+        "protocol": "fMRI-T1-Anatomical-Parameters",
+        "enabled": true,
+        "count": 1
+      },
+      {
+        "protocol": "fMRI-T2-FLAIR-Parameters",
+        "enabled": false,
+        "count": 1
+      },
+      {
+        "protocol": "fMRI-SBRef-Parameters",
+        "enabled": true,
+        "count": 1
+      },
+      {
+        "protocol": "fMRI-FieldMap-RevPE-Parameters",
+        "enabled": true,
+        "count": 1
+      },
+      {
+        "protocol": "fMRI-Dummy-Parameters",
+        "enabled": false,
+        "count": 1
+      }
+    ],
+    "perAim": {
+      "glm": {
+        "custom": false,
+        "screeningMinutes": 6,
+        "positioningMinutes": 5,
+        "practiceMinutes": 4,
+        "breakMinutes": 3,
+        "structurals": [
+          {
+            "protocol": "fMRI-Survey-Parameters",
+            "enabled": true,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-SENSE-Reference-Parameters",
+            "enabled": true,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-T1-Anatomical-Parameters",
+            "enabled": true,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-T2-FLAIR-Parameters",
+            "enabled": false,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-SBRef-Parameters",
+            "enabled": true,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-FieldMap-RevPE-Parameters",
+            "enabled": true,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-Dummy-Parameters",
+            "enabled": false,
+            "count": 1
+          }
+        ]
+      },
+      "mvpa": {
+        "custom": false,
+        "screeningMinutes": 6,
+        "positioningMinutes": 5,
+        "practiceMinutes": 4,
+        "breakMinutes": 3,
+        "structurals": [
+          {
+            "protocol": "fMRI-Survey-Parameters",
+            "enabled": true,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-SENSE-Reference-Parameters",
+            "enabled": true,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-T1-Anatomical-Parameters",
+            "enabled": true,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-T2-FLAIR-Parameters",
+            "enabled": false,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-SBRef-Parameters",
+            "enabled": true,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-FieldMap-RevPE-Parameters",
+            "enabled": true,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-Dummy-Parameters",
+            "enabled": false,
+            "count": 1
+          }
+        ]
+      },
+      "ts": {
+        "custom": false,
+        "screeningMinutes": 6,
+        "positioningMinutes": 5,
+        "practiceMinutes": 4,
+        "breakMinutes": 3,
+        "structurals": [
+          {
+            "protocol": "fMRI-Survey-Parameters",
+            "enabled": true,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-SENSE-Reference-Parameters",
+            "enabled": true,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-T1-Anatomical-Parameters",
+            "enabled": true,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-T2-FLAIR-Parameters",
+            "enabled": false,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-SBRef-Parameters",
+            "enabled": true,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-FieldMap-RevPE-Parameters",
+            "enabled": true,
+            "count": 1
+          },
+          {
+            "protocol": "fMRI-Dummy-Parameters",
+            "enabled": false,
+            "count": 1
+          }
+        ]
+      }
+    }
+  },
+  "questionBank": {
+    "size": 1500,
+    "maxRepeats": 6,
+    "yesPct": 50,
+    "controlPct": 15,
+    "families": [
+      {
+        "name": "Perceptual / relational",
+        "pct": 14,
+        "role": "Controlled relations and matched predicate reversals"
+      },
+      {
+        "name": "Arbitrarily learned facts",
+        "pct": 12,
+        "role": "Reduces reliance on pre-existing semantic knowledge"
+      },
+      {
+        "name": "Recognition / working memory",
+        "pct": 12,
+        "role": "Separates retrieval demands from answer identity"
+      },
+      {
+        "name": "Category / object property",
+        "pct": 13,
+        "role": "Tests semantic category generalisation"
+      },
+      {
+        "name": "Arithmetic / comparison",
+        "pct": 13,
+        "role": "Objective, easily balanced answers"
+      },
+      {
+        "name": "Logic / inference",
+        "pct": 12,
+        "role": "Tests answer invariance across reasoning operations"
+      },
+      {
+        "name": "Linguistic judgment",
+        "pct": 12,
+        "role": "Phonological, orthographic and semantic overlap"
+      },
+      {
+        "name": "General knowledge",
+        "pct": 12,
+        "role": "Extends to familiar natural questions"
+      }
+    ]
+  },
+  "aims": {
+    "glm": {
+      "id": "glm",
+      "name": "Aim 1 - GLM / FIR",
+      "short": "GLM",
+      "enabled": true,
+      "protocol": "fMRI-GLM-Parameters",
+      "requestedPct": 2,
+      "locked": false,
+      "phases": [
+        {
+          "name": "Fixation",
+          "min": 2,
+          "max": 6,
+          "jitter": true,
+          "role": "fixation"
+        },
+        {
+          "name": "Question",
+          "min": 4,
+          "max": 4,
+          "jitter": false,
+          "role": "question"
+        },
+        {
+          "name": "Rest",
+          "min": 1,
+          "max": 2,
+          "jitter": true,
+          "role": "rest"
+        },
+        {
+          "name": "Answer",
+          "min": 3,
+          "max": 3,
+          "jitter": false,
+          "role": "answer"
+        },
+        {
+          "name": "Fixation",
+          "min": 2,
+          "max": 6,
+          "jitter": true,
+          "role": "fixation"
+        }
+      ],
+      "structure": {
+        "trialsPerBlock": 12,
+        "interTrialGap": 0,
+        "blocksPerRun": 4,
+        "interBlockRest": 20,
+        "dummyVolumes": 6,
+        "leadIn": 12,
+        "leadOut": 12,
+        "runsPerSession": 2
+      },
+      "decode": {
+        "objective": "detection",
+        "labelOrder": "blocked",
+        "labelRunLength": 12
+      },
+      "targetQuestions": 400,
+      "separationTolerancePct": 45,
+      "sessions": 0,
+      "labelBalance": 50,
+      "seed": 20260823
+    },
+    "mvpa": {
+      "id": "mvpa",
+      "name": "Aim 2 - MVPA",
+      "short": "MVPA",
+      "enabled": true,
+      "protocol": "fMRI-MVPA-Parameters",
+      "requestedPct": 11,
+      "locked": false,
+      "phases": [
+        {
+          "name": "Fixation",
+          "min": 2,
+          "max": 6,
+          "jitter": true,
+          "role": "fixation"
+        },
+        {
+          "name": "Question",
+          "min": 4,
+          "max": 4,
+          "jitter": false,
+          "role": "question"
+        },
+        {
+          "name": "Rest",
+          "min": 6,
+          "max": 10,
+          "jitter": true,
+          "role": "rest"
+        },
+        {
+          "name": "Answer cue",
+          "min": 3,
+          "max": 3,
+          "jitter": false,
+          "role": "answer"
+        },
+        {
+          "name": "Fixation",
+          "min": 10,
+          "max": 14,
+          "jitter": true,
+          "role": "fixation"
+        }
+      ],
+      "structure": {
+        "trialsPerBlock": 10,
+        "interTrialGap": 0,
+        "blocksPerRun": 3,
+        "interBlockRest": 12,
+        "dummyVolumes": 12,
+        "leadIn": 12,
+        "leadOut": 12,
+        "runsPerSession": 3
+      },
+      "decode": {
+        "objective": "estimation",
+        "labelOrder": "intermixed",
+        "labelRunLength": 1
+      },
+      "targetQuestions": 750,
+      "separationTolerancePct": 12,
+      "sessions": 0,
+      "labelBalance": 50,
+      "seed": 20260823
+    },
+    "ts": {
+      "id": "ts",
+      "name": "Aim 3 - Spatiotemporal",
+      "short": "Time-Series",
+      "enabled": true,
+      "protocol": "fMRI-Time-Series-Parameters-V3",
+      "requestedPct": 87,
+      "locked": false,
+      "phases": [
+        {
+          "name": "Fixation",
+          "min": 2,
+          "max": 6,
+          "jitter": true,
+          "role": "fixation"
+        },
+        {
+          "name": "Question",
+          "min": 4,
+          "max": 4,
+          "jitter": false,
+          "role": "question"
+        },
+        {
+          "name": "Rest",
+          "min": 12,
+          "max": 16,
+          "jitter": true,
+          "role": "rest"
+        },
+        {
+          "name": "Answer cue",
+          "min": 3,
+          "max": 3,
+          "jitter": false,
+          "role": "answer"
+        },
+        {
+          "name": "Fixation",
+          "min": 18,
+          "max": 23.5,
+          "jitter": true,
+          "role": "fixation"
+        }
+      ],
+      "structure": {
+        "trialsPerBlock": 10,
+        "interTrialGap": 0,
+        "blocksPerRun": 2,
+        "interBlockRest": 12,
+        "dummyVolumes": 12,
+        "leadIn": 12,
+        "leadOut": 12,
+        "runsPerSession": 4
+      },
+      "decode": {
+        "objective": "separation",
+        "labelOrder": "intermixed",
+        "labelRunLength": 1
+      },
+      "targetQuestions": 5000,
+      "separationTolerancePct": 4,
+      "sessions": 0,
+      "labelBalance": 50,
+      "seed": 20260823
+    }
+  },
+  "dynScansFrom": "max"
+}
